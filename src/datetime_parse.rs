@@ -17,30 +17,15 @@ pub fn parse_datetime_tz(date_str: &str) -> Result<DateTime<Tz>, String> {
         }
     };
 
-    let datetime = match parse_datetime(&date_str[..space_idx]) {
-        Ok(datetime_str) => datetime_str,
-        Err(error) => {
-            return Err(error);
-        }
-    };
-
-
-    let timezone = match get_timezone(&date_str[space_idx + 1..]) {
-        Ok(timezone_str) => timezone_str,
-        Err(error) => {
-            return Err(error);
-        }
-    };
+    let datetime = parse_datetime(&date_str[..space_idx])?;
+    let timezone = get_timezone(&date_str[space_idx + 1..])?;
 
     Ok(timezone.ymd(datetime.year(), datetime.month(), datetime.day())
         .and_hms(datetime.hour(), datetime.minute(), datetime.second()))
 }
 
 pub fn change_timezone(date: &DateTime<Tz>, tz: &str) -> Result<DateTime<Tz>, String> {
-    let timezone = match get_timezone(tz) {
-        Ok(tz_str) => tz_str,
-        Err(error) => return Err(error)
-    };
+    let timezone = get_timezone(tz)?;
 
     Ok(date.with_timezone(&timezone))
 }
@@ -69,4 +54,3 @@ fn get_timezone(tz_string: &str) -> Result<Tz, String> {
         }
     }
 }
-
