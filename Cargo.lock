@@ -207,6 +207,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "clokwerk"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f98552495ff36d2b2d5aca5ec09b50d5938ef7217d16c629e3f1261b92cec06"
+dependencies = [
+ "chrono",
+]
+
+[[package]]
 name = "cloudabi"
 version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1081,6 +1090,7 @@ dependencies = [
  "bincode",
  "chrono",
  "chrono-tz",
+ "clokwerk",
  "lazy_static",
  "parking_lot",
  "rand",
@@ -1088,6 +1098,7 @@ dependencies = [
  "regex",
  "serde",
  "serenity",
+ "threadpool",
  "uuid",
 ]
 

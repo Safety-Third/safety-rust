@@ -1,4 +1,4 @@
-
+use chrono::Duration;
 use serenity::prelude::*;
 use serenity::model::prelude::*;
 use serenity::framework::standard::{
@@ -14,6 +14,44 @@ macro_rules! error {
   ($type:expr, $value:expr) => {
     Err(CommandError(format!("Could not find {} {}", $type, $value))) 
   };
+}
+
+pub fn format_duration(duration: &Duration) -> String {
+  let mut duration = Duration::seconds(duration.num_seconds());
+  let mut string = String::new();
+
+  if duration.num_days() > 0 {
+    string += &simple_pluralize("day", duration.num_days());
+    duration = duration - Duration::days(duration.num_days());
+  }
+
+  if duration.num_hours() > 0 {
+    if !string.is_empty() {
+      string += ", ";
+    }
+
+    string += &simple_pluralize("hour", duration.num_hours());
+    duration = duration - Duration::hours(duration.num_hours());
+  }
+
+  if duration.num_minutes() > 0 {
+    if !string.is_empty() {
+      string += ", ";
+    }
+
+    string += &simple_pluralize("minute", duration.num_minutes());
+    duration = duration - Duration::minutes(duration.num_minutes());
+  }
+
+  if duration.num_seconds() > 0 {
+    if !string.is_empty() {
+      string += ", ";
+    }
+
+    string += &simple_pluralize("second", duration.num_seconds());
+  }
+
+  string
 }
 
 pub fn get_channel_from_string(ctx: &mut Context, 
@@ -36,7 +74,7 @@ pub fn get_channel_from_string(ctx: &mut Context,
   }
 }
 
-pub fn get_guild(ctx: &mut Context, msg: &Message) 
+pub fn get_guild(ctx: &Context, msg: &Message) 
   -> Result<Arc<RwLock<Guild>>, CommandError> {
   match msg.guild(&ctx.cache) {
     Some(guild) => Ok(guild),
@@ -81,5 +119,13 @@ pub fn get_user_from_string(guild: &Guild,
         None => error!("user", name_or_id)
       }
     }
+  }
+}
+
+fn simple_pluralize(msg: &str, count: i64) -> String {
+  if count == 1 {
+    format!("1 {}", msg)
+  } else {
+    format!("{} {}s", count, msg)
   }
 }

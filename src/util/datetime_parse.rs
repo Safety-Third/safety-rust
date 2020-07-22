@@ -7,10 +7,13 @@ use chrono_tz::{
     Tz
 };
 
-const TIME_FORMATS: [&str; 2] = ["%-m/%-d/%y %-I:%M %p", "%-m/%-d/%y %-H:%M"];
+const TIME_FORMATS: [&str; 4] = [
+    "%-m/%-d/%y %-I:%M %p", "%-m/%-d/%y %-H:%M",
+    "%-m/%-d/%y %-I:%M:%S %p", "%-m/%-d/%y %-H:%M:%S"
+];
 
 pub fn parse_datetime_tz(date_str: &str) -> Result<DateTime<Tz>, String> {
-    let space_idx = match date_str.rfind(" ") {
+    let space_idx = match date_str.rfind(' ') {
         Some(index) => index,
         None => {
             return Err(String::from("No spaces in your string. Have you provided a time zone?"));
@@ -24,18 +27,12 @@ pub fn parse_datetime_tz(date_str: &str) -> Result<DateTime<Tz>, String> {
         .and_hms(datetime.hour(), datetime.minute(), datetime.second()))
 }
 
-pub fn change_timezone(date: &DateTime<Tz>, tz: &str) -> Result<DateTime<Tz>, String> {
-    let timezone = get_timezone(tz)?;
-
-    Ok(date.with_timezone(&timezone))
-}
-
 fn parse_datetime(date_str: &str) -> Result<NaiveDateTime, String> {
     for format in TIME_FORMATS.iter() {
         let date = NaiveDateTime::parse_from_str(date_str, format);
 
-        if date.is_ok() {
-            return  Ok(date.unwrap());
+        if let Ok(result) = date {
+            return Ok(result);
         }
     }
 

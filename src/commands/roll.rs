@@ -15,6 +15,29 @@ use std::hash::{Hash, Hasher};
 #[command]
 #[min_args(1)]
 #[usage("die_list")]
+#[example("1d20 2d4 3d125129")]
+#[example("3d8+5 2d6-8")]
+#[example("8d10dl2")]
+#[example("8d10dh3")]
+#[example("8d10dldh")]
+#[example("10d20+2dl2dh2")]
+/// Rolls one or more dice. Dice rolls should be in this general form:
+/// "int"d"int"
+/// >roll 1d20
+/// 
+/// You can also add modifiers to the roll:
+/// +/-"int"
+/// >roll 3d8+5 
+/// 
+/// And you can drop the n highest/lowest rolls:
+/// dl"int"dh"int" (you can omit "int" to drop 1)
+/// >roll 8d10dl2: drop 2 lowest
+/// >roll 8d10dh: drop highest
+/// >roll 8d10dldh: drop lowest and highest
+/// 
+/// Put together, we have:
+/// "int"d"int"+/-"int"dl"int"dh"int" 
+/// >roll 10d20+2dl2dh2: 10 d 20s, +2, drop 2 lowest and highest
 pub fn roll(ctx: &mut Context, msg: &Message, args: Args) -> CommandResult {
   let mut total_string = String::from(">>> ");
 
