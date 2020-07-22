@@ -125,9 +125,11 @@ impl Callable<Arc<Http>> for Poll {
     let max_count = results[0].0;
     let max_vote_msg = vote_str(max_count);
 
-    for idx in 1..results.len() {
-      if results[idx].0 == max_count {
-        wins.push(results[idx].1);
+    if results.len() > 1 {
+      for item in &results[1..] {
+        if item.0 == max_count {
+          wins.push(item.1);
+        }
       }
     }
 
@@ -138,15 +140,18 @@ impl Callable<Arc<Http>> for Poll {
       result_msg += &format!("**Tie between {}** ({} {} each)\n\n>>> ",
         joined_str, &max_count, max_vote_msg);
     } else {
-      result_msg += &format!("**{} wins! ({} {})\n\n>>> ",
+      result_msg += &format!("**{}** wins! ({} {})\n\n>>> ",
         wins[0], &max_count, max_vote_msg);
     }
 
-    for idx in wins.len()..results.len() {
-      let vote_msg = vote_str(results[idx].0);
-      result_msg += &format!("**{}** ({} {})\n", 
-        results[idx].1, results[idx].0, vote_msg);
+    if results.len() > wins.len() {
+      for item in &results[wins.len()..] {
+        let vote_msg = vote_str(item.0);
+        result_msg += &format!("**{}** ({} {})\n", 
+          item.1, item.0, vote_msg);
+      }
     }
+
 
     let _ = channel_id.say(http, result_msg);
   }
