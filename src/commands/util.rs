@@ -1,4 +1,8 @@
+#![macro_use]
+
 use chrono::Duration;
+use lazy_static::lazy_static;
+use regex::Regex;
 use serenity::prelude::*;
 use serenity::model::prelude::*;
 use serenity::framework::standard::{
@@ -14,6 +18,37 @@ macro_rules! error {
   ($type:expr, $value:expr) => {
     Err(CommandError(format!("Could not find {} {}", $type, $value))) 
   };
+}
+
+#[macro_export]
+macro_rules! command_err_str {
+  ($string:expr) => {
+    Err(CommandError(String::from($string)))
+  };
+}
+
+#[macro_export]
+macro_rules! command_err {
+  ($string:expr) => {
+    Err(CommandError($string))
+  };
+}
+
+lazy_static!{
+  /// https://unicode.org/reports/tr51/#EBNF_and_Regex
+  pub static ref EMOJI_REGEX: Regex = Regex::new(r"(?x)
+    <a?:[a-zA-Z0-9_]+:[0-9]+>|
+    \p{RI}\p{RI}|
+    \p{Emoji} 
+      ( \p{EMod} 
+      | \x{FE0F} \x{20E3}? 
+      | [\x{E0020}-\x{E007E}]+ \x{E007F} )?
+      (\x{200D} \p{Emoji}
+        ( \p{EMod} 
+        | \x{FE0F} \x{20E3}? 
+        | [\x{E0020}-\x{E007E}]+ \x{E007F} )?
+      )*"
+    ).unwrap();
 }
 
 pub fn format_duration(duration: &Duration) -> String {
@@ -78,7 +113,7 @@ pub fn get_guild(ctx: &Context, msg: &Message)
   -> Result<Arc<RwLock<Guild>>, CommandError> {
   match msg.guild(&ctx.cache) {
     Some(guild) => Ok(guild),
-    None => Err(CommandError(String::from("Guild not in cache")))
+    None => command_err_str!("Could not find guild")
   }
 }
 
@@ -122,6 +157,7 @@ pub fn get_user_from_string(guild: &Guild,
   }
 }
 
+#[inline]
 fn simple_pluralize(msg: &str, count: i64) -> String {
   if count == 1 {
     format!("1 {}", msg)

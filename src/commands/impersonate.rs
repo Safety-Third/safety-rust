@@ -29,7 +29,7 @@ pub fn impersonate(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandR
 
   let message = match args.remains() {
     Some(text) => text,
-    None =>  return Err(CommandError(String::from("You must provide a message")))
+    None => return command_err_str!("You must provide a message")
   };
   
   match channel_id.say(&ctx.http, format!("```{}```", message)) {

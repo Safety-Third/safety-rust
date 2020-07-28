@@ -182,9 +182,11 @@ impl TypeMapKey for RedisSchedulerKey {
   type Value = Arc<Mutex<RedisScheduler<Task, Arc<Http>>>>;
 }
 
+pub struct RedisWrapper(pub Connection);
+
 pub struct RedisConnectionKey;
 impl TypeMapKey for RedisConnectionKey {
-  type Value = Arc<Mutex<Connection>>;
+  type Value = Arc<Mutex<RedisWrapper>>;
 }
 
 

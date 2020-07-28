@@ -100,7 +100,7 @@ fn change_roles<F>(ctx: &mut Context, msg: &Message, mut args: Args, mut func: F
           Err(error) => return Err(error)
         }
       },
-      Err(error) => return Err(CommandError(error.to_string()))
+      Err(error) => return command_err!(error.to_string())
     }
   };
 
@@ -121,6 +121,6 @@ fn change_roles<F>(ctx: &mut Context, msg: &Message, mut args: Args, mut func: F
 
       Ok(())
     },
-    Err(error) => Err(CommandError(error.to_string()))
+    Err(error) => command_err!(error.to_string())
   }
 }

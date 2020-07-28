@@ -3,11 +3,9 @@ mod util;
 
 use chrono::Utc;
 use chrono_tz::EST5EDT;
-use clokwerk::{Scheduler, ScheduleHandle, TimeUnits};
-use lazy_static::lazy_static;
+use clokwerk::{Scheduler, TimeUnits};
 use parking_lot::Mutex;
-use redis::{Commands, Client};
-use regex::Regex;
+use redis::{Client, Commands, RedisResult};
 use serenity::{
   client::{Client as DiscordClient},
   framework::standard::{
@@ -17,7 +15,8 @@ use serenity::{
   },
   http::Http,
   model::{
-    channel::{Channel, Message}, gateway::Ready, id::UserId, user::OnlineStatus
+    channel::{Channel, Message, Reaction, ReactionType},
+    gateway::Ready, id::UserId, user::OnlineStatus
   },
   prelude::{Context,EventHandler}
 };
@@ -26,16 +25,21 @@ use threadpool::ThreadPool;
 use std::{collections::{HashMap, HashSet}, sync::Arc, time::Duration};
 
 use commands::{
-  events::*, impersonate::*, poll::*, roles::*, roll::*,
-  types::{ClokwerkSchedulerKey, RedisSchedulerKey, RedisConnectionKey, Task}
+  events::*, impersonate::*, poll::*, roles::*, roll::*, stats::*,
+  types::{ClokwerkSchedulerKey, RedisSchedulerKey, RedisConnectionKey, RedisWrapper, Task},
+  util::{EMOJI_REGEX, get_guild}
 };
 
 use util::scheduler::{Callable, Scheduler as RedisScheduler};
 
 #[group]
-#[commands(cancel, impersonate, leave, poll, roll, schedule, signup)]
+#[commands(impersonate, poll, roll)]
 #[description = "General commands"]
 struct General;
+
+#[group]
+#[commands(cancel, leave, schedule, signup,)]
+struct Event;
 
 #[group]
 #[commands(add_roles, remove_roles, set_roles)]
@@ -43,54 +47,39 @@ struct General;
 #[prefixes("roles", "ro")]
 struct Roles;
 
+#[group]
+#[commands(
+  categories, consent, delete, delete_category, 
+  revoke, set_category, stats, uses, view_categories
+)]
+struct Stats;
+
 use std::env;
 
-const THREAD_COUNT: usize = 10;
-
-lazy_static!{
-  static ref EMOJI_REGEX: Regex = Regex::new(r"(?x)
-    (
-      \p{Emoji_Modifier_Base}|
-      \p{Emoji_Modifier}|
-      \p{Emoji_Component}|
-      <a?:[a-zA-Z0-9_]+:[0-9]+>
-    )").unwrap();
-}
+const THREAD_COUNT: usize = 5;
 
 struct Handler;
 
 impl EventHandler for Handler {
   fn ready(&self, ctx: Context, _: Ready) {
-
-
   }
 
-  /*fn message(&self, ctx: Context, msg: Message) {
+  fn message(&self, ctx: Context, msg: Message) {
     if msg.is_own(&ctx.cache) {
-        return;
+      return;
     }
 
-    let channel = match msg.channel(&ctx.cache) {
-      Some(c) => c,
+    let id = match msg.guild_id {
+      Some(i) => i.0,
       None => {
-        return;
+        match get_guild(&ctx, &msg) {
+          Ok(guild) => guild.read().id.0,
+          Err(_) => return
+        }
       }
     };
 
-    let guild_channel = match channel {
-      Channel::Guild(c) => c,
-      _ => { return; }
-    };
-
-    let guild = match get_guild(&ctx, &msg) {
-      Ok(g) => g,
-      Err(_) => { return; }
-    };
-
-    let key = {
-      let guild = guild.read();
-      format!("{}:{}", msg.author.id.0, guild.id.0)
-    };
+    let key = format!("{}:{}", msg.author.id.0, id);
 
     let lock = {
       let mut context = ctx.data.write();
@@ -101,7 +90,7 @@ impl EventHandler for Handler {
 
     let mut data: HashMap<String, u64> = { 
       let mut redis_client = lock.lock();
-      match redis_client.hgetall(&key) {
+      match redis_client.0.hgetall(&key) {
         Ok(result) => result,
         Err(_) => HashMap::new()
       }
@@ -112,9 +101,146 @@ impl EventHandler for Handler {
     }
 
     for mat in EMOJI_REGEX.find_iter(&msg.content) {
-      println!("{:?}", &msg.content[mat.start()..mat.end()]);
+      if mat.end() > mat.start() + 1 {
+        let key = &msg.content[mat.range()];
+        let new_value = match data.get(key){
+          Some(existing) => existing + 1,
+          None => 1
+        };
+
+        data.insert(key.to_owned(), new_value);
+      }
     }
-  }*/
+
+    let mut items: Vec<(String, u64)> = vec![];
+
+    for (key, val) in data.into_iter() {
+      items.push((key, val));
+    }
+  
+    {
+      let mut redis_client = lock.lock();
+      let res: RedisResult<String> = redis_client.0.hset_multiple(key, &items);
+      if let Err(error) = res {
+        println!("{:?}", error);
+      }
+    }
+  }
+  
+  fn reaction_add(&self, ctx: Context, reaction: Reaction) {
+    let guild_id = match reaction.guild_id {
+      Some(id) => id,
+      None => return
+    };
+
+    let user = match reaction.user(&ctx.http) {
+      Ok(u) => u,
+      Err(_) => return
+    };
+
+    if user.bot {
+      return;
+    }
+
+
+    let key = format!("{}:{}", reaction.user_id.0, guild_id);
+
+    let lock = {
+      let mut context = ctx.data.write();
+      context.get_mut::<RedisConnectionKey>()
+        .expect("Expected redis instance")
+        .clone()
+    };
+
+    let data: HashMap<String, u64> = { 
+      let mut redis_client = lock.lock();
+      match redis_client.0.hgetall(&key) {
+        Ok(result) => result,
+        Err(_) => HashMap::new()
+      }
+    };
+
+    if data.get("consent") != Some(&1) {
+      return;
+    }
+
+    let emoji_str = format!("{}", reaction.emoji);
+
+    let new_data = match data.get(&emoji_str) {
+      Some(old) => old + 1,
+      None => 1
+    };
+
+
+    {
+      let mut redis_client = lock.lock();
+      let res: RedisResult<u64> = redis_client.0.hset(&key, emoji_str, new_data);
+
+      if let Err(error) = res {
+        println!("{:?}", error);
+      }
+    };
+  }
+
+  fn reaction_remove(&self, ctx: Context, reaction: Reaction) {
+    let guild_id = match reaction.guild_id {
+      Some(id) => id,
+      None => return
+    };
+
+    let user = match reaction.user(&ctx.http) {
+      Ok(u) => u,
+      Err(_) => return
+    };
+
+    if user.bot {
+      return;
+    }
+
+    let key = format!("{}:{}", reaction.user_id.0, guild_id);
+
+    let lock = {
+      let mut context = ctx.data.write();
+      context.get_mut::<RedisConnectionKey>()
+        .expect("Expected redis instance")
+        .clone()
+    };
+
+    let data: HashMap<String, u64> = { 
+      let mut redis_client = lock.lock();
+      match redis_client.0.hgetall(&key) {
+        Ok(result) => result,
+        Err(_) => HashMap::new()
+      }
+    };
+
+    if data.get("consent") != Some(&1) {
+      return;
+    }
+
+    let emoji_str = format!("{}", reaction.emoji);
+
+    let new_data = match data.get(&emoji_str) {
+      Some(old) => old - 1,
+      None => 0
+    };
+
+    {
+      let mut redis_client = lock.lock();
+
+      let res: RedisResult<u64> = {
+        if new_data != 0 {
+          redis_client.0.hset(&key, emoji_str, new_data)
+        } else {
+          redis_client.0.hdel(&key, emoji_str)
+        }
+      };
+
+      if let Err(error) = res {
+        println!("{:?}", error);
+      }
+    };
+  }
 }
 
 #[help]
@@ -195,9 +321,11 @@ fn main() {
     let handler = scheduler.watch_thread(Duration::from_millis(500));
 
     {
+      let conn_key = Arc::new(Mutex::new(RedisWrapper(persistent_connection)));
+
       let mut data = client.data.write();
       data.insert::<RedisSchedulerKey>(redis_scheduler_arc);
-      data.insert::<RedisConnectionKey>(Arc::new(Mutex::new(persistent_connection)));
+      data.insert::<RedisConnectionKey>(conn_key);
       data.insert::<ClokwerkSchedulerKey>(Arc::new(handler));
     }
   }
@@ -207,10 +335,12 @@ fn main() {
   client.with_framework(StandardFramework::new()
     .configure(|c| c
       .owners(owners)
-      .prefix(">"))
+      .prefix("~"))
     .help(&MY_HELP)
+    .group(&EVENT_GROUP)
     .group(&GENERAL_GROUP)
     .group(&ROLES_GROUP)
+    .group(&STATS_GROUP)
     .after(|ctx, msg, _, error| {
       if error.is_err() {
         let _ = msg.channel_id.say(&ctx.http, 

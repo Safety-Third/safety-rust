@@ -46,9 +46,9 @@ pub fn poll(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
   let duration = parse_time(&timing)?;
 
   if args.remaining() > MAX_POLL_ARGS {
-    return Err(CommandError("You can have a maximum of 20 options".to_owned()));
+    return command_err_str!("You can have a maximum of 20 options");
   } else if args.is_empty() {
-    return Err(CommandError("You must have at least one option".to_owned()));
+    return command_err_str!("You must have at least one option");
   }
 
   let mut options: Vec<String> = vec![];
