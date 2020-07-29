@@ -9,7 +9,7 @@ use redis::{Client, Commands, RedisResult};
 use serenity::{
   client::{Client as DiscordClient},
   framework::standard::{
-    Args, CommandGroup, CommandResult, HelpOptions, 
+    Args, Delimiter, CommandGroup, CommandResult, HelpOptions, 
     help_commands, StandardFramework,
     macros::{group, help}
   },
@@ -38,7 +38,8 @@ use util::scheduler::{Callable, Scheduler as RedisScheduler};
 struct General;
 
 #[group]
-#[commands(cancel, leave, schedule, signup,)]
+#[commands(cancel, leave, schedule, signup)]
+#[description = "Create and manage events"]
 struct Event;
 
 #[group]
@@ -52,6 +53,7 @@ struct Roles;
   categories, consent, delete, delete_category, 
   revoke, set_category, stats, uses, view_categories
 )]
+#[description = "Manage and view emoji stats"]
 struct Stats;
 
 use std::env;
@@ -245,18 +247,27 @@ impl EventHandler for Handler {
 
 #[help]
 #[individual_command_tip = "Henlo, welcome to Bot v2.\n\
-For help on a specific command, just pass that name in."]
+For help on a specific command, just pass that name in.
+To see this in embed form, pass `embed` as your first option (e.g. `help embed other_stuff`)"]
 #[command_not_found_text = "Could not find: `{}`."]
 #[max_levenshtein_distance(3)]
 #[lacking_permissions = "Hide"]
 #[lacking_role = "Nothing"]
 #[wrong_channel = "Strike"]
 fn my_help(
-  context: &mut Context, msg: &Message, args: Args,
+  context: &mut Context, msg: &Message, mut args: Args,
   help_options: &'static HelpOptions, groups: &[&'static CommandGroup],
   owners: HashSet<UserId>
 ) -> CommandResult {
-  help_commands::with_embeds(context, msg, args, help_options, groups, owners)
+  let embed = args.current() == Some("embed");
+
+  if embed {
+    args.advance();
+    let remaining_args = Args::new(args.remains().unwrap_or(""), &[Delimiter::Single(' ')]);
+    help_commands::with_embeds(context, msg, remaining_args, help_options, groups, owners)
+  } else {
+    help_commands::plain(context, msg, args, help_options, groups, owners)
+  }
 }
 
 fn main() {
