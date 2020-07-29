@@ -45,7 +45,6 @@ struct Event;
 #[group]
 #[commands(add_roles, remove_roles, set_roles)]
 #[description = "Commands for managing roles (admin-only)"]
-#[prefixes("roles", "ro")]
 struct Roles;
 
 #[group]

@@ -7,7 +7,8 @@ use serenity::framework::standard::{
 
 use super::util::*;
 
-#[command("add")]
+#[command("addRoles")]
+#[aliases("add_roles", "addR", "add_r")]
 #[example("person role-a \"role b\"")]
 #[min_args(2)]
 #[required_permissions("ADMINISTRATOR")]
@@ -28,7 +29,8 @@ pub fn add_roles(ctx: &mut Context, msg: &Message, args: Args) -> CommandResult 
   })
 }
 
-#[command("remove")]
+#[command("removeRoles")]
+#[aliases("remove_roles", "remR", "rem_r")]
 #[description = "Remove one or more roles to a user"]
 #[example("person role-a \"role b\"")]
 #[min_args(2)]
@@ -51,7 +53,8 @@ pub fn remove_roles(ctx: &mut Context, msg: &Message, args: Args) -> CommandResu
   })
 }
 
-#[command("set")]
+#[command("setRoles")]
+#[aliases("rset_roles", "setR", "set_r")]
 #[description = "Set one or more roles for a user"]
 #[example("person role-a \"role b\"")]
 #[min_args(1)]
