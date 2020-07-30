@@ -24,14 +24,30 @@ pub struct Event {
   pub time: String,
 }
 
-impl Callable<Arc<Http>> for Event {
-  fn call(&self, http: &Arc<Http>) {
-    let members: String = self.members
+impl Event {
+  #[inline]
+  pub fn members_and_author(&self) -> String {
+    let author = UserId(self.author).mention();
+    if self.members.is_empty() {
+      author
+    } else {
+      format!("{}, {}", author, self.members())
+    }
+  }
+
+  #[inline]
+  pub fn members(&self) -> String {
+    self.members
       .iter()
       .map(|member| UserId(*member).mention())
       .collect::<Vec<String>>()
-      .join(", ");
+      .join(", ")
+  }
+}
 
+impl Callable<Arc<Http>> for Event {
+  fn call(&self, http: &Arc<Http>) {
+    let members = self.members();
     let author = UserId(self.author).mention();
 
     let send_result = ChannelId(self.channel).send_message(http, |m| {

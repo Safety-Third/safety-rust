@@ -38,7 +38,7 @@ use util::scheduler::{Callable, Scheduler as RedisScheduler};
 struct General;
 
 #[group]
-#[commands(cancel, leave, schedule, signup)]
+#[commands(cancel, leave, reschedule, schedule, signup)]
 #[description = "Create and manage events"]
 struct Event;
 

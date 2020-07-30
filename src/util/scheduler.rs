@@ -73,9 +73,9 @@ impl<T: Callable<A> + DeserializeOwned + Serialize, A> Scheduler<T, A> {
       .del(&[&self.jobs_key, &self.schedule_key])
       .query(&mut self.connection)
   }
-
+  
   pub fn clear_ready_jobs(&mut self, timestamp: i64) -> RedisResult<()> {
-    let jobs_key = &self.jobs_key;
+  let jobs_key = &self.jobs_key;
     let schedule_key = &self.schedule_key;
 
     let _ = transaction(&mut self.connection, &[jobs_key, schedule_key], |con, pipe| {
@@ -96,24 +96,29 @@ impl<T: Callable<A> + DeserializeOwned + Serialize, A> Scheduler<T, A> {
     Ok(())
   }
 
-  pub fn edit_job(&mut self, task: &T, id: &str) -> RedisResult<()> {
+  pub fn edit_job(&mut self, task: &T, id: &str, time: Option<i64>) -> RedisResult<()> {
     let task = match bincode::serialize(task) {
       Ok(serialized) => serialized,
       Err(error) => return redis_error!(error)    
     };
 
     let jobs_key = &self.jobs_key;
+    let sched_key = &self.schedule_key;
 
-    transaction(&mut self.connection, &[jobs_key], |con, pipe| {
+    transaction(&mut self.connection, &[jobs_key, sched_key], |con, pipe| {
       let exists: u8 = con.hexists(jobs_key, id)?;
 
       if exists == 0 {
         return redis_error!(format!("No job found for {}", id));
       }
 
-      pipe.
-        hset(jobs_key, id, &task[..]).ignore()
-        .query(con)
+      let mut pipeline = pipe.hset(jobs_key, id, &task[..]).ignore();
+
+      if let Some(new_time) = time {
+        pipeline = pipeline.zadd(sched_key, id, new_time).ignore()
+      }
+
+      pipeline.query(con)
     })
   }
 
