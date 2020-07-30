@@ -66,7 +66,7 @@ impl EventHandler for Handler {
   }
 
   fn message(&self, ctx: Context, msg: Message) {
-    if msg.is_own(&ctx.cache) {
+    if msg.author.bot {
       return;
     }
 
@@ -284,7 +284,6 @@ fn main() {
     Err(why) => panic!("Couldn't get application info: {:?}", why),
   };
 
-  let thread_pool = ThreadPool::new(THREAD_COUNT);
 
   {
     let redis_client = Client::open("redis://127.0.0.1/")
@@ -304,7 +303,7 @@ fn main() {
     let redis_scheduler_arc = Arc::new(Mutex::new(redis_scheduler));
 
     let lock = redis_scheduler_arc.clone();
-    let pool = thread_pool.clone();
+    let pool = client.threadpool.clone();
     let http = client.cache_and_http.http.clone();
 
     scheduler.every(5.seconds()).run(move|| {
@@ -340,7 +339,7 @@ fn main() {
     }
   }
 
-  client.threadpool = thread_pool;
+  client.threadpool.set_num_threads(THREAD_COUNT);
   
   client.with_framework(StandardFramework::new()
     .configure(|c| c

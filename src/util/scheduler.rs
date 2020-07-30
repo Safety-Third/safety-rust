@@ -205,7 +205,6 @@ impl<T: Callable<A> + DeserializeOwned + Serialize, A> Scheduler<T, A> {
     let jobs_key = &self.jobs_key;
     let sched_key = &self.schedule_key;
 
-    // let job_score: 
     let _: () = transaction(&mut self.connection, &[jobs_key, sched_key], |con, pipe| {
       let job_score: Option<i64> = con.zscore(sched_key, job_id)?;
 
