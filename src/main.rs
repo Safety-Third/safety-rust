@@ -5,6 +5,8 @@ use chrono::Utc;
 use chrono_tz::EST5EDT;
 use clokwerk::{Scheduler, TimeUnits};
 use parking_lot::Mutex;
+use rand::{thread_rng, Rng};
+use rand::distributions::Alphanumeric;
 use redis::{Client, Commands, RedisResult};
 use serenity::{
   client::{Client as DiscordClient},
@@ -20,7 +22,6 @@ use serenity::{
   },
   prelude::{Context,EventHandler}
 };
-use threadpool::ThreadPool;
 
 use std::{collections::{HashMap, HashSet}, sync::Arc, time::Duration};
 
@@ -62,9 +63,6 @@ const THREAD_COUNT: usize = 5;
 struct Handler;
 
 impl EventHandler for Handler {
-  fn ready(&self, ctx: Context, _: Ready) {
-  }
-
   fn message(&self, ctx: Context, msg: Message) {
     if msg.author.bot {
       return;
@@ -286,6 +284,13 @@ fn main() {
 
 
   {
+    let generator = || -> String {
+      thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(8)
+        .collect()
+    };
+
     let redis_client = Client::open("redis://127.0.0.1/")
       .expect("Should be able to create a redis client");
 
@@ -298,7 +303,7 @@ fn main() {
     let mut scheduler = Scheduler::with_tz(EST5EDT);
 
     let redis_scheduler: RedisScheduler<Task, Arc<Http>> = 
-      RedisScheduler::new(connection, None, None);
+      RedisScheduler::new(connection, Some(Box::new(generator)), None, None);
 
     let redis_scheduler_arc = Arc::new(Mutex::new(redis_scheduler));
 

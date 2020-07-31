@@ -6,8 +6,9 @@ use redis::{
 use serde::{Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
-use std::io::{Error, ErrorKind::Other};
-use std::marker::PhantomData;
+use std::{
+  io::{Error, ErrorKind::Other}, marker::PhantomData
+};
 
 macro_rules! redis_error {
   ($message:expr) => {
@@ -19,7 +20,8 @@ pub struct Scheduler<T: Callable<A> + DeserializeOwned + Serialize, A> {
   connection: Connection,
   jobs_key: String,
   schedule_key: String,
-  
+  rng: Box<dyn Fn() -> String + Send>,
+
   argument_type: PhantomData<A>,
   resource_type: PhantomData<T>,
 }
@@ -52,15 +54,24 @@ impl FromRedisValue for MyVec {
 const JOBS_KEY: &str = "jobs";
 const SCHEDULE_KEY: &str = "schedule";
 
+fn generic_rng() -> String {
+  Uuid::new_v4().to_simple().to_string()
+}
 
 impl<T: Callable<A> + DeserializeOwned + Serialize, A> Scheduler<T, A> {
-  pub fn new(connection: Connection, 
+  pub fn new(connection: Connection, method: Option<Box<dyn Fn() -> String + Send>>,
       jobs_key: Option<&str>, schedule_key: Option<&str>) -> Scheduler<T, A> {
+
+    let rng = match method {
+      Some(random) => random,
+      None => Box::new(generic_rng)
+    };
 
     Scheduler {
       connection,
       jobs_key: String::from(jobs_key.unwrap_or(JOBS_KEY)),
       schedule_key: String::from(schedule_key.unwrap_or(SCHEDULE_KEY)),
+      rng,
 
       argument_type: PhantomData,
       resource_type: PhantomData
@@ -75,7 +86,7 @@ impl<T: Callable<A> + DeserializeOwned + Serialize, A> Scheduler<T, A> {
   }
   
   pub fn clear_ready_jobs(&mut self, timestamp: i64) -> RedisResult<()> {
-  let jobs_key = &self.jobs_key;
+    let jobs_key = &self.jobs_key;
     let schedule_key = &self.schedule_key;
 
     let _ = transaction(&mut self.connection, &[jobs_key, schedule_key], |con, pipe| {
@@ -228,7 +239,9 @@ impl<T: Callable<A> + DeserializeOwned + Serialize, A> Scheduler<T, A> {
       Err(error) => return redis_error!(error)    
     };
 
-    let mut new_id = Uuid::new_v4().to_simple().to_string();
+    let rng_generator = &self.rng;
+
+    let mut new_id = rng_generator();
 
     let jobs_key = &self.jobs_key;
     let schedule_key = &self.schedule_key;
@@ -242,7 +255,7 @@ impl<T: Callable<A> + DeserializeOwned + Serialize, A> Scheduler<T, A> {
             .query(con);
         }
 
-        new_id = Uuid::new_v4().to_simple().to_string();
+        new_id = rng_generator();
       }
     })?;
 
