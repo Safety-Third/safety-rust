@@ -5,8 +5,9 @@ use chrono::Utc;
 use chrono_tz::EST5EDT;
 use clokwerk::{Scheduler, TimeUnits};
 use parking_lot::Mutex;
-use rand::{thread_rng, Rng};
-use rand::distributions::Alphanumeric;
+use rand::{
+  distributions::Alphanumeric, Rng,thread_rng
+};
 use redis::{Client, Commands, RedisResult};
 use serenity::{
   client::{Client as DiscordClient},
@@ -282,12 +283,11 @@ fn main() {
     Err(why) => panic!("Couldn't get application info: {:?}", why),
   };
 
-
   {
     let generator = || -> String {
       thread_rng()
         .sample_iter(&Alphanumeric)
-        .take(8)
+        .take(6)
         .collect()
     };
 
