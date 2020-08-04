@@ -1,7 +1,7 @@
 mod commands;
 mod util;
 
-use chrono::Utc;
+use chrono::{Datelike, Utc};
 use chrono_tz::EST5EDT;
 use clokwerk::{Scheduler, TimeUnits};
 use parking_lot::Mutex;
@@ -19,12 +19,13 @@ use serenity::{
   http::Http,
   model::{
     channel::{Channel, Message, Reaction, ReactionType},
-    gateway::Ready, id::UserId, user::OnlineStatus
+    gateway::Ready, id::{ChannelId, UserId}, user::OnlineStatus
   },
   prelude::{Context,EventHandler}
 };
+use tokio::runtime::Runtime;
 
-use std::{collections::{HashMap, HashSet}, sync::Arc, time::Duration};
+use std::{collections::{HashMap, HashSet}, env::var, sync::Arc, time::Duration};
 
 use commands::{
   events::*, impersonate::*, poll::*, roles::*, roll::*, stats::*,
@@ -32,7 +33,10 @@ use commands::{
   util::{EMOJI_REGEX, get_guild}
 };
 
-use util::scheduler::{Callable, Scheduler as RedisScheduler};
+use util::{
+  scheduler::{Callable, Scheduler as RedisScheduler},
+  sheets::{parse_date, query}
+};
 
 #[group]
 #[commands(impersonate, poll, roll)]
@@ -56,8 +60,6 @@ struct Roles;
 )]
 #[description = "Manage and view emoji stats"]
 struct Stats;
-
-use std::env;
 
 const THREAD_COUNT: usize = 5;
 
@@ -269,8 +271,18 @@ fn my_help(
 }
 
 fn main() {
-  // Login with a bot token from the environment
-  let mut client = DiscordClient::new(&env::var("RUST_BOT").expect("token"), Handler)
+  let api_key = var("GOOGLE_API_KEY")
+    .expect("Expected Google API key");
+
+  let birthday_announce_channel = var("SAFETY_ANNOUNCEMENT_CHANNEL")
+    .expect("Expected birthday announcement channel")
+    .parse::<u64>()
+    .expect("Expected channel to be a number");
+
+  let birthday_sheet_id = var("SAFETY_GOOGLE_DOCS_LINK")
+    .expect("Expected Safety Google Docs link");
+
+  let mut client = DiscordClient::new(&var("RUST_BOT").expect("token"), Handler)
       .expect("Error creating client");
 
   let owners = match client.cache_and_http.http.get_current_application_info() {
@@ -282,6 +294,9 @@ fn main() {
     },
     Err(why) => panic!("Couldn't get application info: {:?}", why),
   };
+
+  let mut runtime = Runtime::new()
+    .expect("Expected tokio runtime");
 
   {
     let generator = || -> String {
@@ -331,6 +346,44 @@ fn main() {
         Err(error) => println!("{:?}", error)
       };
     });
+
+    let handle = runtime.handle().clone();
+    let birthday_vector = vec!("A2:A51", "J2:J51");
+    let http = client.cache_and_http.http.clone();
+
+    scheduler.every(1.day()).at("00:00:30").run(move || {
+      let future = query(&api_key, &birthday_sheet_id, &birthday_vector);
+      let now = Utc::now().with_timezone(&EST5EDT);
+
+      if let Ok(sheet) = handle.block_on(future) {
+        if sheet.value_ranges.len() != 2 {
+          return;
+        }
+        
+        for idx in 0..49 {
+          let potential_date = &sheet.value_ranges[1].values[idx];
+          let potential_name = &sheet.value_ranges[0].values[idx];
+
+          if potential_date.len() != 1 || potential_name.len() != 1 {
+            continue;
+          }
+
+          let (month, day, year) = match parse_date(&potential_date[0]) {
+            Ok(result) => result,
+            Err(_) => continue
+          };
+
+          if now.day() == day && now.month() == month {
+            let msg = format!("Happy birthday {}! ({} years)!",
+              potential_name[0], now.year() - year);
+
+            let result = ChannelId(birthday_announce_channel).say(&http, msg);
+            println!("{:?}", result);
+          }
+        }
+      }
+    });
+
 
     let handler = scheduler.watch_thread(Duration::from_millis(500));
 
