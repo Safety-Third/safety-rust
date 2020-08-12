@@ -10,7 +10,7 @@ use rand::{
 };
 use redis::{Client, Commands, RedisResult};
 use serenity::{
-  client::{Client as DiscordClient, bridge::gateway::ShardId},
+  client::{Client as DiscordClient},
   framework::standard::{
     Args, Delimiter, CommandGroup, CommandResult, HelpOptions, 
     help_commands, StandardFramework,
@@ -18,8 +18,7 @@ use serenity::{
   },
   http::Http,
   model::{
-    channel::{Channel, Message, Reaction, ReactionType},
-    gateway::Ready, id::{ChannelId, UserId}, user::OnlineStatus
+    channel::{Message, Reaction}, id::{ChannelId, UserId},
   },
   prelude::{Context,EventHandler}
 };
@@ -296,7 +295,7 @@ fn main() {
     Err(why) => panic!("Couldn't get application info: {:?}", why),
   };
 
-  let mut runtime = Runtime::new()
+  let runtime = Runtime::new()
     .expect("Expected tokio runtime");
 
   {
