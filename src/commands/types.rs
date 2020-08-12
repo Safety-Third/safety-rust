@@ -204,5 +204,3 @@ pub struct RedisConnectionKey;
 impl TypeMapKey for RedisConnectionKey {
   type Value = Arc<Mutex<RedisWrapper>>;
 }
-
-

@@ -73,6 +73,20 @@ pub fn set_roles(ctx: &mut Context, msg: &Message, args: Args) -> CommandResult 
   change_roles(ctx, msg, args, |_, _| {})
 }
 
+/// This function is responsible for getting the roles for a current user,
+/// and calling a generic function, `func`, to change the user's roles 
+/// 
+/// # Arguments
+/// - `ctx`:  the context of this current message
+/// - `msg`:  the original message for this request
+/// - `args`: the arguments for this function
+/// - `func`: a handler that takes as its input a vector of roles generated from `args`,
+/// and a vector of roles that the user currently has. The former vector is mutated
+/// 
+/// # Returns
+/// - `Err`: if a user could not be found, one or more roles could not be found,
+/// or updating the user's role(s) failed
+/// - `Ok`: otherwise
 fn change_roles<F>(ctx: &mut Context, msg: &Message, mut args: Args, mut func: F) -> CommandResult 
   where F: FnMut(&mut Vec<RoleId>, &Vec<RoleId>) {
 

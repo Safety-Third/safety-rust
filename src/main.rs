@@ -10,7 +10,7 @@ use rand::{
 };
 use redis::{Client, Commands, RedisResult};
 use serenity::{
-  client::{Client as DiscordClient},
+  client::{Client as DiscordClient, bridge::gateway::ShardId},
   framework::standard::{
     Args, Delimiter, CommandGroup, CommandResult, HelpOptions, 
     help_commands, StandardFramework,
@@ -284,6 +284,7 @@ fn main() {
 
   let mut client = DiscordClient::new(&var("RUST_BOT").expect("token"), Handler)
       .expect("Error creating client");
+      
 
   let owners = match client.cache_and_http.http.get_current_application_info() {
     Ok(info) => {
@@ -384,7 +385,6 @@ fn main() {
       }
     });
 
-
     let handler = scheduler.watch_thread(Duration::from_millis(500));
 
     {
@@ -402,7 +402,7 @@ fn main() {
   client.with_framework(StandardFramework::new()
     .configure(|c| c
       .owners(owners)
-      .prefix("~"))
+      .prefix(">"))
     .help(&MY_HELP)
     .group(&EVENT_GROUP)
     .group(&GENERAL_GROUP)

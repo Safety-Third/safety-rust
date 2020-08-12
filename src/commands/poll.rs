@@ -109,6 +109,15 @@ pub fn poll(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
   Ok(())
 }
 
+/// Converts a potential "timing string" (day, hour, minute, second) to a Duration
+/// 
+/// # Arguments
+/// * `timing` - A potential timing string. A successful format would be
+/// in the form (\d+d)?(\d+h)?(\d+m)?(\d+s?), or a single number (minutes). 
+/// This time string **must** be at least 30 seconds
+/// # Returns
+/// - `Err`: if the string is malformed, or less than 30 seconds
+/// - `Ok`: a duration representing the amount of time for the `timing` string
 fn parse_time(timing: &str) -> Result<Duration, &str> {
   lazy_static! {
     static ref MIN_DURATION: Duration = Duration::seconds(30);
@@ -172,7 +181,3 @@ fn parse_time(timing: &str) -> Result<Duration, &str> {
   
   Ok(duration)
 }
-
-
-
-

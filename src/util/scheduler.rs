@@ -267,4 +267,3 @@ pub trait Callable<T> {
   fn call(&self, arg: &T);
 }
   
-  

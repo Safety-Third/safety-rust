@@ -8,13 +8,14 @@ use serenity::framework::standard::{
 use super::util::*;
 
 #[command]
-#[description = "Impersonate this bot in a given channel"]
 #[example("000000000000000000 this is a message")]
 #[example("\"some-channel\" this is a message")]
 #[min_args(2)]
 #[owners_only]
 #[required_permissions("SEND_MESSAGES")]
 #[usage("channel_id message")]
+/// Impersonate this bot in a given channel
+/// You must also be present in the channel to message it
 pub fn impersonate(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
   let guild = get_guild(ctx, msg)?;
   

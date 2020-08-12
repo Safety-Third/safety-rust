@@ -194,6 +194,11 @@ fn handle_roll(roll_str: &str) -> Result<(i32, String), String> {
   Ok((sum, result_str))
 }
 
+/// Hashes and rolls an invalid die roll and returns the error message.
+/// This will always return an error
+/// # Arguments
+/// - die:    a string representing an invalid die roll, to be hashed
+/// - error:  the error message corresponding to the roll
 fn error_hash(die: &str, error: &str) -> Result<(i32, String), String> {
   let mut s = DefaultHasher::new();
   die.hash(&mut s);
@@ -206,6 +211,9 @@ fn error_hash(die: &str, error: &str) -> Result<(i32, String), String> {
     format!("**{}**.\nBut here's a guess for {} = 1d{}: **{}**", error, die, hashed_val, rng))
 }
 
+/// Creates a String rerpesentation of `numbers`, separated by commas
+/// # Arguments
+/// - `numbers` - a vector of numbers
 fn pretty_vec(numbers: &[i32]) -> String {
   let string_list: Vec<String> = numbers
     .iter()
