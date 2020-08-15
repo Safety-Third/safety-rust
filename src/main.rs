@@ -401,21 +401,23 @@ fn main() {
   client.with_framework(StandardFramework::new()
     .configure(|c| c
       .owners(owners)
-      .prefix(">"))
+      .prefixes(vec![">", "~"]))
     .help(&MY_HELP)
     .group(&EVENT_GROUP)
     .group(&GENERAL_GROUP)
     .group(&ROLES_GROUP)
     .group(&STATS_GROUP)
     .after(|ctx, msg, _, error| {
-      if error.is_err() {
+      if error.is_err() && !msg.author.bot {
         let _ = msg.channel_id.say(&ctx.http, 
           &format!("Error in {:?}:\n{}", msg.content, error.unwrap_err().0));
       }
     })
     .on_dispatch_error(|ctx, msg, error| {
+      if !msg.author.bot {
         let _ = msg.channel_id.say(&ctx.http, 
           &format!("Error in {:?}:\n{:?}", msg.content, error));
+      }
     }));
 
   if let Err(why) = client.start() {
