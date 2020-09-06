@@ -281,10 +281,12 @@ fn main() {
   let birthday_sheet_id = var("SAFETY_GOOGLE_DOCS_LINK")
     .expect("Expected Safety Google Docs link");
 
+  let redis_url = var("SAFETY_REDIS_URL")
+    .unwrap_or_else(|_| String::from("redis://127.0.0.1"));
+
   let mut client = DiscordClient::new(&var("RUST_BOT").expect("token"), Handler)
       .expect("Error creating client");
       
-
   let owners = match client.cache_and_http.http.get_current_application_info() {
     Ok(info) => {
       let mut set = HashSet::new();
@@ -306,7 +308,7 @@ fn main() {
         .collect()
     };
 
-    let redis_client = Client::open("redis://127.0.0.1/")
+    let redis_client = Client::open(redis_url)
       .expect("Should be able to create a redis client");
 
     let connection = redis_client.get_connection()
