@@ -40,11 +40,22 @@ const MAX_POLL_ARGS: usize = 20;
 /// - 5m (5 minutes)
 /// - 5 (5 minutes)
 pub fn poll(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
-  let topic: String = args.single_quoted()?;
-  let timing: String = args.single_quoted()?;
-  
-  let duration = parse_time(&timing)?;
+  let first: String = args.single_quoted()?;
+  let second: String = args.single_quoted()?;
 
+  let topic: String;
+
+  let duration = match parse_time(&first) {
+    Ok(time) => {
+      topic = second;
+      time
+    },
+    Err(_) => {
+      topic = first;
+      parse_time(&second)?
+    }
+  };
+  
   if args.remaining() > MAX_POLL_ARGS {
     return command_err_str!("You can have a maximum of 20 options");
   } else if args.is_empty() {

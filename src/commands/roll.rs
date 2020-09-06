@@ -54,7 +54,7 @@ pub fn roll(ctx: &mut Context, msg: &Message, args: Args) -> CommandResult {
   }
 
   let _ = msg.channel_id.say(&ctx.http, 
-    format!("{}, you rolled a total of **{}**\n{}---\n~roll 1", 
+    format!("{}, you rolled a total of **{}**\n{}---\n", 
       msg.author.mention(), total_sum, total_string));
 
   Ok(())

@@ -189,7 +189,6 @@ pub fn reschedule(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandRe
 
 #[command]
 #[num_args(2)]
-#[only_in("guild")]
 #[usage("\"event topic\" \"datetime string\"")]
 #[example("\"A test event\" \"3/27/20 15:39 EDT\"")]
 #[example("\"A test event\" \"3/27/20 3:39 PM EDT\"")]
