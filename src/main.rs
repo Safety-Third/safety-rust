@@ -1,3 +1,4 @@
+
 mod commands;
 mod util;
 
@@ -18,7 +19,7 @@ use serenity::{
   },
   http::Http,
   model::{
-    channel::{Message, Reaction}, id::{ChannelId, UserId},
+    channel::{Message, Reaction}, id::{ChannelId, GuildId, UserId},
   },
   prelude::{Context,EventHandler}
 };
@@ -65,6 +66,27 @@ const THREAD_COUNT: usize = 5;
 struct Handler;
 
 impl EventHandler for Handler {
+  fn cache_ready(&self, ctx: Context, guilds: Vec<GuildId>) {
+    for guild in &guilds {
+      let cached_guild = match guild.to_guild_cached(&ctx.cache) {
+        Some(g) => g,
+        None => {
+          println!("Not cached");
+          return;
+        }
+      };
+      
+      {
+        let mut access = cached_guild.write();
+        for member_result in guild.members_iter(&ctx) {
+          if let Ok(user) = member_result {
+            access.members.insert(user.user_id(), user);
+          }
+        }
+      }
+    }
+  }
+
   fn message(&self, ctx: Context, msg: Message) {
     if msg.author.bot {
       return;
