@@ -1,7 +1,7 @@
 use chrono::{Duration, Utc};
 use chrono_tz::{EST5EDT};
 use lazy_static::lazy_static;
-use regex::Regex;
+use regex::{Match,Regex};
 use serenity::prelude::*;
 use serenity::model::prelude::*;
 use serenity::utils::Colour;
@@ -18,20 +18,15 @@ use super::{
 const MAX_POLL_ARGS: usize = 20;
 
 #[command]
-#[min_args(3)]
-#[usage("topic time options_list")]
-#[example("\"What are birds?\" 2d3h1m2s \":jeff:\" \"We don't know\"")]
-/// Creates an emoji-based poll for a certain topic.
-/// **NOTE**: It is important that statements involving multiple words are quoted if you want them to be together.
-///
-/// Correct poll:
-/// `>poll "What are birds?" 2d3h1m2s ":jeff:" "We don't know"`
-/// (two options, ":jeff:" and "We don't know")
-/// Create a poll for 2 days, 3 hours, 1 minute and 2 seconds from now
-///    
-/// Incorrect poll:
-/// `>poll "What are birds?" 2d3h1m ":jeff:" We don't know`
-/// (four options, ":jeff:", "We", "don't", and "know")
+#[usage("time topic options_list")]
+#[example("2d3h1m2s What are birds? [:jeff:] [We don't know]")]
+#[example("2d3h1m2s What are birds?
+:jeff:
+We don't know
+")]
+/// Creates an emoji-based poll for a certain topic. Options Options can
+/// either be provided surrounded by [], such as `[this is an option]`, or on
+/// subsequent lines after the topic. **DO NOT** Mix both
 ///
 /// When providing times, here is the general format: XdXhXmXs. Replace X with a number. Examples:
 /// - 1d (1 day)
@@ -40,33 +35,46 @@ const MAX_POLL_ARGS: usize = 20;
 /// - 5m (5 minutes)
 /// - 5 (5 minutes)
 pub fn poll(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
+  lazy_static! {
+    static ref RE: Regex = Regex::new(r"\[[^\[\]]+\]").unwrap();
+  }
+
   let first: String = args.single_quoted()?;
-  let second: String = args.single_quoted()?;
-
-  let topic: String;
-
-  let duration = match parse_time(&first) {
-    Ok(time) => {
-      topic = second;
-      time
-    },
-    Err(_) => {
-      topic = first;
-      parse_time(&second)?
-    }
+  let remaining = match args.remains() {
+    Some(string) => string,
+    None => return command_err_str!("You must provide a poll topic and options")
   };
-  
-  if args.remaining() > MAX_POLL_ARGS {
-    return command_err_str!("You can have a maximum of 20 options");
-  } else if args.is_empty() {
-    return command_err_str!("You must have at least one option");
+
+  let mut options: Vec<&str>;
+
+  let topic: &str;
+
+  if remaining.contains("\n") {
+    let lines: Vec<&str> = remaining.split("\n")
+      .map(|line| line.trim())
+      .collect();
+    topic = lines[0];
+    options = lines[1..].to_owned();
+    
+  } else {
+    options = vec![];
+
+    let matches: Vec<Match> = RE.find_iter(remaining).collect();
+    
+    if matches.len() == 0 {
+      return command_err_str!("You must provide at least one option");
+    } else if matches.len() > MAX_POLL_ARGS {
+      return command_err!(format!("You can have at maximum {} options", MAX_POLL_ARGS));
+    }
+
+    topic = &remaining[..matches[0].start() - 1].trim();
+    
+    for option in matches {
+      options.push(&remaining[option.start() + 1 .. option.end() - 1].trim());
+    }
   }
 
-  let mut options: Vec<String> = vec![];
-
-  for _ in 0..args.remaining() {
-    options.push(args.single_quoted()?);
-  }
+  let duration = parse_time(&first)?;
 
   let lock = {
     let mut context = ctx.data.write();
@@ -109,7 +117,7 @@ pub fn poll(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
     author: msg.author.id.0,
     channel: msg.channel_id.0,
     message: message.id.0,
-    topic
+    topic: topic.to_owned()
   };
 
   {
