@@ -266,7 +266,7 @@ impl EventHandler for Handler {
 }
 
 #[help]
-#[individual_command_tip = "Henlo, welcome to Bot v2.\n\
+#[individual_command_tip = "Welcome to Bot v2.\n\
 For help on a specific command, just pass that name in.
 To see this in embed form, pass `embed` as your first option (e.g. `help embed other_stuff`)"]
 #[command_not_found_text = "Could not find: `{}`."]

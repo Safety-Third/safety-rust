@@ -42,7 +42,7 @@ pub fn poll(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
   let first: String = args.single_quoted()?;
   let remaining = match args.remains() {
     Some(string) => string,
-    None => return command_err_str!("You must provide a poll topic and options")
+    None => return error_with_usage(String::from("You must provide a poll topic and options"))
   };
 
   let mut options: Vec<&str>;
@@ -62,9 +62,9 @@ pub fn poll(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
     let matches: Vec<Match> = RE.find_iter(remaining).collect();
     
     if matches.len() == 0 {
-      return command_err_str!("You must provide at least one option");
+      return error_with_usage(String::from("You must provide at least one option"));
     } else if matches.len() > MAX_POLL_ARGS {
-      return command_err!(format!("You can have at maximum {} options", MAX_POLL_ARGS));
+      return error_with_usage(format!("You can have at maximum {} options", MAX_POLL_ARGS));
     }
 
     topic = &remaining[..matches[0].start() - 1].trim();
@@ -126,6 +126,16 @@ pub fn poll(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
   };
   
   Ok(())
+}
+
+fn error_with_usage(base_err: String) -> CommandResult {
+  return command_err!(format!("{}\nHere are two examples:
+`>poll 1m this is my topic [option 1, in brackets] [option 2, also in brackets]`
+
+`>poll 1m this is my topic
+option 1, on a separate line
+option 2, also on a separate line`
+", base_err));
 }
 
 /// Converts a potential "timing string" (day, hour, minute, second) to a Duration
