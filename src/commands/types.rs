@@ -153,14 +153,15 @@ impl Callable<Arc<Http>> for Poll {
 
     if wins.len() > 1 {
       let joined_str = wins.join(", ");
-      result_msg += &format!("**Tie between {}** ({} {} each)\n\n>>> ",
+      result_msg += &format!("**Tie between {}** ({} {} each)",
         joined_str, &max_count, max_vote_msg);
     } else {
-      result_msg += &format!("**{}** wins! ({} {})\n\n>>> ",
+      result_msg += &format!("**{}** wins! ({} {})",
         wins[0], &max_count, max_vote_msg);
     }
 
     if results.len() > wins.len() {
+      result_msg += "\n\n>>> ";
       for item in &results[wins.len()..] {
         let vote_msg = vote_str(item.0);
         result_msg += &format!("**{}** ({} {})\n", 

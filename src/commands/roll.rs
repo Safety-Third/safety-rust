@@ -211,7 +211,7 @@ fn error_hash(die: &str, error: &str) -> Result<(i32, String), String> {
     format!("**{}**.\nBut here's a guess for {} = 1d{}: **{}**", error, die, hashed_val, rng))
 }
 
-/// Creates a String rerpesentation of `numbers`, separated by commas
+/// Creates a String representation of `numbers`, separated by commas
 /// # Arguments
 /// - `numbers` - a vector of numbers
 fn pretty_vec(numbers: &[i32]) -> String {

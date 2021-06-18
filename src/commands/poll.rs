@@ -51,6 +51,7 @@ pub fn poll(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
 
   if remaining.contains("\n") {
     let lines: Vec<&str> = remaining.split("\n")
+      .filter(|line| !line.trim().is_empty())
       .map(|line| line.trim())
       .collect();
     topic = lines[0];
