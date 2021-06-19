@@ -5,34 +5,37 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use serenity::prelude::*;
 use serenity::model::prelude::*;
-use serenity::framework::standard::{
-  CommandError,
-};
-use serenity::utils::parse_mention;
 
-use parking_lot::RwLock;
-use std::sync::Arc;
+use serenity::{
+  client::Context,
+  framework::standard::{CommandError, CommandResult},
+  utils::parse_mention,
+};
+
+#[inline]
+pub async fn handle_command_err(ctx: &Context, msg: &Message, error: &str) -> CommandResult {
+  if !msg.author.bot {
+    let _ = msg.channel_id.say(&ctx.http, 
+      &format!("Error in {:?}:\n{}", msg.content, error)).await;
+  }
+
+  Ok(())
+}
 
 #[macro_export]
 macro_rules! error {
   ($type:expr, $value:expr) => {
-    Err(CommandError(format!("Could not find {} {}", $type, $value))) 
-  };
-}
-
-#[macro_export]
-macro_rules! command_err_str {
-  ($string:expr) => {
-    Err(CommandError(String::from($string)))
+    Err(Box::new(SerenityError::Url(format!("Could not find {} {}", $type, $value)))) 
   };
 }
 
 #[macro_export]
 macro_rules! command_err {
   ($string:expr) => {
-    Err(CommandError($string))
+    Err(Box::new(SerenityError::Url(String::from($string))))
   };
 }
+
 
 lazy_static!{
   /// https://unicode.org/reports/tr51/#EBNF_and_Regex
@@ -89,7 +92,7 @@ pub fn format_duration(duration: &Duration) -> String {
   string
 }
 
-pub fn get_channel_from_string(ctx: &mut Context, 
+pub async fn get_channel_from_string(ctx: &Context, 
   guild: &Guild, name_or_id: &str) -> Result<ChannelId, CommandError> {
 
   match parse_mention(&name_or_id) {
@@ -101,7 +104,7 @@ pub fn get_channel_from_string(ctx: &mut Context,
       }
     },
     None => {
-      match guild.channel_id_from_name(&ctx.cache, &name_or_id) {
+      match guild.channel_id_from_name(&ctx.cache, &name_or_id).await {
         Some(id) => Ok(id),
         None =>  error!("channel", name_or_id)
       }
@@ -109,11 +112,11 @@ pub fn get_channel_from_string(ctx: &mut Context,
   }
 }
 
-pub fn get_guild(ctx: &Context, msg: &Message) 
-  -> Result<Arc<RwLock<Guild>>, CommandError> {
-  match msg.guild(&ctx.cache) {
+pub async fn get_guild(ctx: &Context, msg: &Message) 
+  -> Result<Guild, CommandError> {
+  match msg.guild(&ctx.cache).await {
     Some(guild) => Ok(guild),
-    None => command_err_str!("Could not find guild")
+    None => command_err!("Could not find guild")
   }
 }
 
@@ -150,7 +153,7 @@ pub fn get_user_from_string(guild: &Guild,
     }
     None => {
       match guild.member_named(&name_or_id) {
-        Some(member) => Ok(member.user_id()),
+        Some(member) => Ok(member.user.id),
         None => error!("user", name_or_id)
       }
     }

@@ -5,12 +5,13 @@ use regex::Regex;
 use serenity::prelude::*;
 use serenity::model::prelude::*;
 use serenity::framework::standard::{
-  Args, CommandError, CommandResult,
-  macros::command,
+  Args, CommandResult, macros::command,
 };
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+
+use super::util::handle_command_err;
 
 #[command]
 #[min_args(1)]
@@ -38,7 +39,7 @@ use std::hash::{Hash, Hasher};
 /// Put together, we have:
 /// "int"d"int"+/-"int"dl"int"dh"int" 
 /// >roll 10d20+2dl2dh2: 10 d 20s, +2, drop 2 lowest and highest
-pub fn roll(ctx: &mut Context, msg: &Message, args: Args) -> CommandResult {
+pub async fn roll(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
   let mut total_string = String::from(">>> ");
 
   let mut total_sum: i32 = 0;
@@ -49,13 +50,13 @@ pub fn roll(ctx: &mut Context, msg: &Message, args: Args) -> CommandResult {
         total_sum += count;
         total_string += &message;
       },
-      Err(error) => return Err(CommandError(error))
+      Err(error) => return handle_command_err(ctx, msg, &error).await
     };
   }
 
   let _ = msg.channel_id.say(&ctx.http, 
     format!("{}, you rolled a total of **{}**\n{}\n", 
-      msg.author.mention(), total_sum, total_string));
+      msg.author.mention(), total_sum, total_string)).await;
 
   Ok(())
 }

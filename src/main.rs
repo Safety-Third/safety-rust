@@ -3,38 +3,42 @@ mod util;
 
 use chrono::{Datelike, Utc};
 use chrono_tz::EST5EDT;
-use clokwerk::{Scheduler, TimeUnits};
-use parking_lot::Mutex;
 use rand::{
   distributions::Alphanumeric, Rng,thread_rng
 };
 use redis::{Client, Commands, RedisResult};
 use serenity::{
-  client::{Client as DiscordClient},
+  async_trait,
+  client::{Client as DiscordClient, bridge::gateway::GatewayIntents},
   framework::standard::{
-    Args, Delimiter, CommandGroup, CommandResult, HelpOptions, 
-    help_commands, StandardFramework,
-    macros::{group, help}
+    Args, CommandGroup, CommandResult, Delimiter, DispatchError,
+    HelpOptions, help_commands, StandardFramework,
+    macros::{group, help, hook}
   },
   http::Http,
   model::{
-    channel::{Message, Reaction}, id::{ChannelId, GuildId, UserId},
+    channel::{Message, Reaction}, id::{ChannelId, UserId},
   },
   prelude::{Context,EventHandler}
 };
-use tokio::runtime::Runtime;
+use tokio::{spawn, sync::Mutex, time };
 
 use std::{collections::{HashMap, HashSet}, env::var, sync::Arc, time::Duration};
 
 use commands::{
-  events::*, impersonate::*, poll::*, roles::*, roll::*, stats::*,
-  types::{ClokwerkSchedulerKey, RedisSchedulerKey, RedisConnectionKey, RedisWrapper, Task},
+  events::*,
+  impersonate::*,
+  poll::*,
+  roles::*,
+  roll::*,
+  stats::*,
+  types::{RedisSchedulerKey, RedisConnectionKey, RedisWrapper, Task},
   util::{EMOJI_REGEX, get_guild}
 };
 
 use util::{
   scheduler::{Callable, Scheduler as RedisScheduler},
-  sheets::{parse_date, query}
+  sheets::{parse_date, query},
 };
 
 #[group]
@@ -60,33 +64,11 @@ struct Roles;
 #[description = "Manage and view emoji stats"]
 struct Stats;
 
-const THREAD_COUNT: usize = 5;
-
 struct Handler;
 
+#[async_trait]
 impl EventHandler for Handler {
-  fn cache_ready(&self, ctx: Context, guilds: Vec<GuildId>) {
-    for guild in &guilds {
-      let cached_guild = match guild.to_guild_cached(&ctx.cache) {
-        Some(g) => g,
-        None => {
-          println!("Not cached");
-          return;
-        }
-      };
-      
-      {
-        let mut access = cached_guild.write();
-        for member_result in guild.members_iter(&ctx) {
-          if let Ok(user) = member_result {
-            access.members.insert(user.user_id(), user);
-          }
-        }
-      }
-    }
-  }
-
-  fn message(&self, ctx: Context, msg: Message) {
+  async fn message(&self, ctx: Context, msg: Message) {
     if msg.author.bot {
       return;
     }
@@ -94,8 +76,8 @@ impl EventHandler for Handler {
     let id = match msg.guild_id {
       Some(i) => i.0,
       None => {
-        match get_guild(&ctx, &msg) {
-          Ok(guild) => guild.read().id.0,
+        match get_guild(&ctx, &msg).await {
+          Ok(guild) => guild.id.0,
           Err(_) => return
         }
       }
@@ -104,14 +86,14 @@ impl EventHandler for Handler {
     let key = format!("{}:{}", msg.author.id.0, id);
 
     let lock = {
-      let mut context = ctx.data.write();
+      let mut context = ctx.data.write().await;
       context.get_mut::<RedisConnectionKey>()
         .expect("Expected redis instance")
         .clone()
     };
 
     let mut data: HashMap<String, u64> = { 
-      let mut redis_client = lock.lock();
+      let mut redis_client = lock.lock().await;
       match redis_client.0.hgetall(&key) {
         Ok(result) => result,
         Err(_) => HashMap::new()
@@ -141,7 +123,7 @@ impl EventHandler for Handler {
     }
   
     {
-      let mut redis_client = lock.lock();
+      let mut redis_client = lock.lock().await;
       let res: RedisResult<String> = redis_client.0.hset_multiple(key, &items);
       if let Err(error) = res {
         println!("{:?}", error);
@@ -149,13 +131,13 @@ impl EventHandler for Handler {
     }
   }
   
-  fn reaction_add(&self, ctx: Context, reaction: Reaction) {
+  async fn reaction_add(&self, ctx: Context, reaction: Reaction) {
     let guild_id = match reaction.guild_id {
       Some(id) => id,
       None => return
     };
 
-    let user = match reaction.user(&ctx.http) {
+    let user = match reaction.user(&ctx.http).await {
       Ok(u) => u,
       Err(_) => return
     };
@@ -164,18 +146,22 @@ impl EventHandler for Handler {
       return;
     }
 
+    let user_id = match reaction.user_id {
+      Some(id) => id,
+      None => return
+    };
 
-    let key = format!("{}:{}", reaction.user_id.0, guild_id);
+    let key = format!("{}:{}", user_id.0, guild_id);
 
     let lock = {
-      let mut context = ctx.data.write();
+      let mut context = ctx.data.write().await;
       context.get_mut::<RedisConnectionKey>()
         .expect("Expected redis instance")
         .clone()
     };
 
     let data: HashMap<String, u64> = { 
-      let mut redis_client = lock.lock();
+      let mut redis_client = lock.lock().await;
       match redis_client.0.hgetall(&key) {
         Ok(result) => result,
         Err(_) => HashMap::new()
@@ -195,7 +181,7 @@ impl EventHandler for Handler {
 
 
     {
-      let mut redis_client = lock.lock();
+      let mut redis_client = lock.lock().await;
       let res: RedisResult<u64> = redis_client.0.hset(&key, emoji_str, new_data);
 
       if let Err(error) = res {
@@ -204,13 +190,13 @@ impl EventHandler for Handler {
     };
   }
 
-  fn reaction_remove(&self, ctx: Context, reaction: Reaction) {
+  async fn reaction_remove(&self, ctx: Context, reaction: Reaction) {
     let guild_id = match reaction.guild_id {
       Some(id) => id,
       None => return
     };
 
-    let user = match reaction.user(&ctx.http) {
+    let user = match reaction.user(&ctx.http).await {
       Ok(u) => u,
       Err(_) => return
     };
@@ -219,17 +205,22 @@ impl EventHandler for Handler {
       return;
     }
 
-    let key = format!("{}:{}", reaction.user_id.0, guild_id);
+    let user_id = match reaction.user_id {
+      Some(id) => id,
+      None => return
+    };
+
+    let key = format!("{}:{}", user_id.0, guild_id);
 
     let lock = {
-      let mut context = ctx.data.write();
+      let mut context = ctx.data.write().await;
       context.get_mut::<RedisConnectionKey>()
         .expect("Expected redis instance")
         .clone()
     };
 
     let data: HashMap<String, u64> = { 
-      let mut redis_client = lock.lock();
+      let mut redis_client = lock.lock().await;
       match redis_client.0.hgetall(&key) {
         Ok(result) => result,
         Err(_) => HashMap::new()
@@ -248,7 +239,7 @@ impl EventHandler for Handler {
     };
 
     {
-      let mut redis_client = lock.lock();
+      let mut redis_client = lock.lock().await;
 
       let res: RedisResult<u64> = {
         if new_data != 0 {
@@ -266,7 +257,7 @@ impl EventHandler for Handler {
 }
 
 #[help]
-#[individual_command_tip = "Welcome to Bot v2.\n\
+#[individual_command_tip = "Welcome to Bot v3.\n\
 For help on a specific command, just pass that name in.
 To see this in embed form, pass `embed` as your first option (e.g. `help embed other_stuff`)"]
 #[command_not_found_text = "Could not find: `{}`."]
@@ -274,23 +265,49 @@ To see this in embed form, pass `embed` as your first option (e.g. `help embed o
 #[lacking_permissions = "Hide"]
 #[lacking_role = "Nothing"]
 #[wrong_channel = "Strike"]
-fn my_help(
-  context: &mut Context, msg: &Message, mut args: Args,
-  help_options: &'static HelpOptions, groups: &[&'static CommandGroup],
+async fn my_help(
+  context: &Context,
+  msg: &Message,
+  args: Args,
+  help_options: &'static HelpOptions,
+  groups: &[&'static CommandGroup],
   owners: HashSet<UserId>
 ) -> CommandResult {
   let embed = args.current() == Some("embed");
 
   if embed {
-    args.advance();
-    let remaining_args = Args::new(args.remains().unwrap_or(""), &[Delimiter::Single(' ')]);
-    help_commands::with_embeds(context, msg, remaining_args, help_options, groups, owners)
+    let message = args.message();
+    let len_to_remove = std::cmp::min(6, message.len());
+
+    let remaining_args = Args::new(&message[len_to_remove..], &[Delimiter::Single(' ')]);
+    println!("{:?}", remaining_args);
+    help_commands::with_embeds(context, msg, remaining_args, help_options, groups, owners).await;
   } else {
-    help_commands::plain(context, msg, args, help_options, groups, owners)
+    help_commands::plain(context, msg, args, help_options, groups, owners).await;
+  }
+  Ok(())
+}
+
+#[hook]
+async fn after(ctx: &Context, msg: &Message, _name: &str, result: CommandResult) {
+  if !msg.author.bot {
+    if let Err(error) = result {
+      let _ = msg.channel_id.say(&ctx.http, 
+        &format!("Error in {:?}:\n{}", msg.content, error)).await;
+    }
   }
 }
 
-fn main() {
+#[hook]
+async fn dispatch_error(ctx: &Context, msg: &Message, error: DispatchError) {
+  if !msg.author.bot {
+    let _ = msg.channel_id.say(&ctx.http, 
+      &format!("Error in {:?}:\n{:?}", msg.content, error)).await;
+  }
+}
+
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
+async fn main() {
   let api_key = var("GOOGLE_API_KEY")
     .expect("Expected Google API key");
 
@@ -302,26 +319,53 @@ fn main() {
   let birthday_sheet_id = var("SAFETY_GOOGLE_DOCS_LINK")
     .expect("Expected Safety Google Docs link");
 
+  let birthday_vector = vec!("A2:A51", "J2:J51");
+
+
   let redis_url = var("SAFETY_REDIS_URL")
     .unwrap_or_else(|_| String::from("redis://127.0.0.1"));
 
-  let mut client = DiscordClient::new(&var("RUST_BOT").expect("token"), Handler)
-      .expect("Error creating client");
-      
-  let owners = match client.cache_and_http.http.get_current_application_info() {
-    Ok(info) => {
-      let mut set = HashSet::new();
-      set.insert(info.owner.id);
+  let token = &var("RUST_BOT").expect("token");
 
-      set
-    },
-    Err(why) => panic!("Couldn't get application info: {:?}", why),
+  
+  let http = Http::new_with_token(&token);
+
+  let owners = {
+    match http.get_current_application_info().await {
+      Ok(info) => {
+        let mut owners = HashSet::new();
+        if let Some(team) = info.team {
+            owners.insert(team.owner_user_id);
+        } else {
+            owners.insert(info.owner.id);
+        }
+
+        owners
+      },
+      Err(why) => panic!("Could not access application info: {:?}", why),
+    }
   };
-
-  let runtime = Runtime::new()
-    .expect("Expected tokio runtime");
+  
+  let mut client = DiscordClient::builder(&token)
+    .event_handler(Handler)
+    .intents(GatewayIntents::all())
+    .framework(StandardFramework::new()
+    .configure(|c| c
+      .owners(owners)
+      .prefixes(vec![">", "~"]))
+    .help(&MY_HELP)
+    .group(&EVENT_GROUP)
+    .group(&GENERAL_GROUP)
+    .group(&ROLES_GROUP)
+    .group(&STATS_GROUP)
+    .after(after)
+    .on_dispatch_error(dispatch_error))
+    .await
+    .expect("Error creating client");
 
   {
+    let http_arc = Arc::new(http);
+
     let generator = || -> String {
       thread_rng()
         .sample_iter(&Alphanumeric)
@@ -338,112 +382,95 @@ fn main() {
     let persistent_connection = redis_client.get_connection()
       .expect("Should be able to create a second redis connection");
 
-    let mut scheduler = Scheduler::with_tz(EST5EDT);
-
     let redis_scheduler: RedisScheduler<Task, Arc<Http>> = 
       RedisScheduler::new(connection, Some(Box::new(generator)), None, None);
 
     let redis_scheduler_arc = Arc::new(Mutex::new(redis_scheduler));
 
     let lock = redis_scheduler_arc.clone();
-    let pool = client.threadpool.clone();
-    let http = client.cache_and_http.http.clone();
 
-    scheduler.every(5.seconds()).run(move|| {
-      let jobs = {
-        let now = Utc::now().timestamp();
-        let mut task_scheduler = lock.lock();
-        task_scheduler.get_and_clear_ready_jobs(now)
-      };
+    
+    spawn(async move {
+      let mut interval = time::interval(Duration::from_secs(5));
 
-      match jobs {
-        Ok(tasks) => {
-          for job in tasks.iter() {
-            let http_clone = http.clone();
-            let clone = job.clone();
-            pool.execute(move || {
-              clone.call(&http_clone);
-            });
-          }
-        }
-        Err(error) => println!("{:?}", error)
+      loop {
+        let jobs = {
+          let now = Utc::now().timestamp();
+          let mut task_scheduler = lock.lock().await;
+          task_scheduler.get_and_clear_ready_jobs(now)
+        };
+
+        let arc_clone = http_arc.clone();
+
+
+        spawn(async move {
+          match jobs {
+            Ok(tasks) => {
+              for job in tasks.iter() {
+                job.call(&arc_clone).await;
+              }
+            }
+            Err(error) => println!("{:?}", error)
+          };
+        });
+       
+
+        interval.tick().await;
       };
     });
 
-    let handle = runtime.handle().clone();
-    let birthday_vector = vec!("A2:A51", "J2:J51");
-    let http = client.cache_and_http.http.clone();
+    let http_clone = client.cache_and_http.http.clone();
 
-    scheduler.every(1.day()).at("00:00:30").run(move || {
-      let future = query(&api_key, &birthday_sheet_id, &birthday_vector);
-      let now = Utc::now().with_timezone(&EST5EDT);
+    spawn(async move {
+      loop {
+        let now = Utc::now().with_timezone(&EST5EDT);
+        let next_time = now.date().succ().and_hms(0, 0, 30);
 
-      if let Ok(sheet) = handle.block_on(future) {
-        if sheet.value_ranges.len() != 2 {
-          return;
-        }
-        
-        for idx in 0..49 {
-          let potential_date = &sheet.value_ranges[1].values[idx];
-          let potential_name = &sheet.value_ranges[0].values[idx];
+        let duration_to_sleep = next_time.signed_duration_since(now)
+          .to_std().unwrap();
 
-          if potential_date.len() != 1 || potential_name.len() != 1 {
-            continue;
+        time::sleep(duration_to_sleep).await;
+
+        if let Ok(sheet) = query(&api_key, &birthday_sheet_id, &birthday_vector).await {
+          if sheet.value_ranges.len() != 2 {
+            return;
           }
-
-          let (month, day, year) = match parse_date(&potential_date[0]) {
-            Ok(result) => result,
-            Err(_) => continue
-          };
-
-          if now.day() == day && now.month() == month {
-            let msg = format!("Happy birthday {}! ({} years)!",
-              potential_name[0], now.year() - year);
-
-            let result = ChannelId(birthday_announce_channel).say(&http, msg);
-            println!("{:?}", result);
+          
+          for idx in 0..49 {
+            let potential_date = &sheet.value_ranges[1].values[idx];
+            let potential_name = &sheet.value_ranges[0].values[idx];
+  
+            if potential_date.len() != 1 || potential_name.len() != 1 {
+              continue;
+            }
+  
+            let (month, day, year) = match parse_date(&potential_date[0]) {
+              Ok(result) => result,
+              Err(_) => continue
+            };
+  
+            if next_time.day() == day && next_time.month() == month {
+              let msg = format!("Happy birthday {}! ({} years)!",
+                potential_name[0], next_time.year() - year);
+  
+              let result = ChannelId(birthday_announce_channel).say(&http_clone, msg).await;
+              println!("{:?}", result);
+            }
           }
         }
       }
     });
-
-    let handler = scheduler.watch_thread(Duration::from_millis(500));
 
     {
       let conn_key = Arc::new(Mutex::new(RedisWrapper(persistent_connection)));
 
-      let mut data = client.data.write();
+      let mut data = client.data.write().await;
       data.insert::<RedisSchedulerKey>(redis_scheduler_arc);
       data.insert::<RedisConnectionKey>(conn_key);
-      data.insert::<ClokwerkSchedulerKey>(Arc::new(handler));
     }
   }
 
-  client.threadpool.set_num_threads(THREAD_COUNT);
-  
-  client.with_framework(StandardFramework::new()
-    .configure(|c| c
-      .owners(owners)
-      .prefixes(vec![">", "~"]))
-    .help(&MY_HELP)
-    .group(&EVENT_GROUP)
-    .group(&GENERAL_GROUP)
-    .group(&ROLES_GROUP)
-    .group(&STATS_GROUP)
-    .after(|ctx, msg, _, error| {
-      if error.is_err() && !msg.author.bot {
-        let _ = msg.channel_id.say(&ctx.http, 
-          &format!("Error in {:?}:\n{}", msg.content, error.unwrap_err().0));
-      }
-    })
-    .on_dispatch_error(|ctx, msg, error| {
-      if !msg.author.bot {
-        let _ = msg.channel_id.say(&ctx.http, 
-          &format!("Error in {:?}:\n{:?}", msg.content, error));
-      }
-    }));
-
-  if let Err(why) = client.start() {
+  if let Err(why) = client.start().await {
     println!("An error occurred while running the client: {:?}", why);
   }
 }

@@ -1,8 +1,7 @@
 use serenity::prelude::*;
 use serenity::model::prelude::*;
 use serenity::framework::standard::{
-  Args, CommandError, CommandResult,
-  macros::command,
+  Args, CommandResult, macros::command,
 };
 
 use super::util::*;
@@ -20,13 +19,13 @@ use super::util::*;
 /// * Users: `@user`, `"user"`, or `000000000000000000`
 /// * Roles: `@role`, `"role"`, or `000000000000000000`
 /// * Roles list is separated by spaces: `role-a @role-b "role c"`
-pub fn add_roles(ctx: &mut Context, msg: &Message, args: Args) -> CommandResult {
+pub async fn add_roles(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
   change_roles(ctx, msg, args, |input_roles, member_roles| {
     input_roles.extend(member_roles);
 
     input_roles.sort();
     input_roles.dedup();
-  })
+  }).await
 }
 
 #[command("removeRoles")]
@@ -43,18 +42,18 @@ pub fn add_roles(ctx: &mut Context, msg: &Message, args: Args) -> CommandResult 
 /// * Users: `@user`, `"user"`, or `000000000000000000`
 /// * Roles: `@role`, `"role"`, or `000000000000000000`
 /// * Roles list is separated by spaces: `role-a @role-b "role c"`
-pub fn remove_roles(ctx: &mut Context, msg: &Message, args: Args) -> CommandResult {
+pub async fn remove_roles(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
   change_roles(ctx, msg, args, |input_roles, member_roles| {
     *input_roles = member_roles
       .iter()
       .filter(|role| !input_roles.contains(role))
       .cloned()
       .collect();
-  })
+  }).await
 }
 
 #[command("setRoles")]
-#[aliases("rset_roles", "setR", "set_r")]
+#[aliases("set_roles", "setR", "set_r")]
 #[description = "Set one or more roles for a user"]
 #[example("person role-a \"role b\"")]
 #[min_args(1)]
@@ -69,8 +68,8 @@ pub fn remove_roles(ctx: &mut Context, msg: &Message, args: Args) -> CommandResu
 /// * Roles list is separated by spaces: `role-a @role-b "role c"`
 /// 
 /// You can provide no roles to remove all roles (aside from @everyone)
-pub fn set_roles(ctx: &mut Context, msg: &Message, args: Args) -> CommandResult {
-  change_roles(ctx, msg, args, |_, _| {})
+pub async fn set_roles(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
+  change_roles(ctx, msg, args, |_, _| {}).await
 }
 
 /// This function is responsible for getting the roles for a current user,
@@ -87,13 +86,11 @@ pub fn set_roles(ctx: &mut Context, msg: &Message, args: Args) -> CommandResult 
 /// - `Err`: if a user could not be found, one or more roles could not be found,
 /// or updating the user's role(s) failed
 /// - `Ok`: otherwise
-fn change_roles<F>(ctx: &mut Context, msg: &Message, mut args: Args, mut func: F) -> CommandResult 
+async fn change_roles<F>(ctx: &Context, msg: &Message, mut args: Args, mut func: F) -> CommandResult 
   where F: FnMut(&mut Vec<RoleId>, &Vec<RoleId>) {
 
-  let guild = get_guild(ctx, msg)?;
+  let guild = get_guild(ctx, msg).await?;
   let args_user = args.parse::<UserId>();
-
-  let guild = guild.read();
 
   let member_id: UserId = if args_user.is_ok() {
     args.single::<UserId>().unwrap()
@@ -125,16 +122,16 @@ fn change_roles<F>(ctx: &mut Context, msg: &Message, mut args: Args, mut func: F
 
   match guild.edit_member(&ctx, member_id, |m| {
     m.roles(&roles)
-  }) {
+  }).await {
     Ok(_) => {
       let roles: Vec<String> = roles
         .into_iter()
-        .map(|role| role.mention())
+        .map(|role| role.mention().to_string())
         .collect();
 
       let _ = msg.channel_id.say(&ctx.http, 
         format!("New roles for {}: {:?}",
-          member.mention(), roles));
+          member.mention(), roles)).await;
 
       Ok(())
     },

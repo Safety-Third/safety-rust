@@ -6,8 +6,7 @@ use serenity::prelude::*;
 use serenity::model::prelude::*;
 use serenity::utils::Colour;
 use serenity::framework::standard::{
-  Args, CommandError, CommandResult,
-  macros::command
+  Args, CommandResult, macros::command
 };
 
 use super::{ 
@@ -34,7 +33,7 @@ We don't know
 /// - 3h5m (3 hours, 5 minutes)
 /// - 5m (5 minutes)
 /// - 5 (5 minutes)
-pub fn poll(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
+pub async fn poll(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
   lazy_static! {
     static ref RE: Regex = Regex::new(r"\[[^\[\]]+\]").unwrap();
   }
@@ -78,7 +77,7 @@ pub fn poll(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
   let duration = parse_time(&first)?;
 
   let lock = {
-    let mut context = ctx.data.write();
+    let mut context = ctx.data.write().await;
     context.get_mut::<RedisSchedulerKey>()
       .expect("Expected redis scheduler")
       .clone()
@@ -86,9 +85,9 @@ pub fn poll(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
 
   let time = (Utc::now() + duration).with_timezone(&EST5EDT);
 
-  let reactions: Vec<String> = EMOJI_ORDER[0..options.len()]
+  let reactions: Vec<ReactionType> = EMOJI_ORDER[0..options.len()]
     .iter()
-    .map(|emoji| emoji.to_string())
+    .map(|emoji| ReactionType::Unicode(emoji.to_string()))
     .collect();
 
   let message = msg.channel_id.send_message(&ctx.http, |m| {
@@ -112,7 +111,7 @@ pub fn poll(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
           .description(description)
       })
       .reactions(reactions)
-  })?;
+  }).await?;
 
   let poll = Poll {
     author: msg.author.id.0,
@@ -122,7 +121,7 @@ pub fn poll(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
   };
 
   {
-    let mut redis_scheduler = lock.lock();
+    let mut redis_scheduler = lock.lock().await;
     redis_scheduler.schedule_job(&Task::Poll(poll), time.timestamp())?
   };
   
