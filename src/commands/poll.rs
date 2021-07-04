@@ -2,19 +2,156 @@ use chrono::{Duration, Utc};
 use chrono_tz::{EST5EDT};
 use lazy_static::lazy_static;
 use regex::{Match,Regex};
-use serenity::prelude::*;
-use serenity::model::prelude::*;
-use serenity::utils::Colour;
-use serenity::framework::standard::{
-  Args, CommandResult, macros::command
+use serde_json::{Value, json};
+use serenity::{
+  framework::standard::{Args, CommandResult, macros::command},
+  model::prelude::*, prelude::*, utils::Colour,
 };
 
 use super::{ 
   types::{EMOJI_ORDER, Poll, RedisSchedulerKey, Task},
-  util::format_duration
+  util::{format_duration, get_str_or_error, get_user}
 };
 
 const MAX_POLL_ARGS: usize = 20;
+
+pub fn poll_command() -> Value {
+  let mut options: Vec<Value> = vec![
+    json!({
+      "type": ApplicationCommandOptionType::String,
+      "name": "topic",
+      "description": "The topic of this poll",
+      "required": true
+    }),
+    json!({
+      "type": ApplicationCommandOptionType::String,
+      "name": "time",
+      "description": "In the form XdXhXmXs (3d2h1m1s 3 day, 2 hour, 1 minute, 1 sec; 2m30s 2 minute, 30 second)",
+      "required": true
+    }),
+    
+  ];
+
+  for idx in 1..=20 {
+    options.push(json!({
+      "type": ApplicationCommandOptionType::String,
+      "name": format!("option-{}", idx),
+      "description": format!("poll option {}", idx),
+      "required": idx < 3
+    }))
+  }
+
+  return json!({
+    "name": "poll",
+    "description": "Creates an emoji-based poll for a certain topic.",
+    "options": options
+  })
+}
+
+pub async fn interaction_poll(ctx: &Context, interaction: &Interaction,
+  data: &ApplicationCommandInteractionData) -> Result<(), String> {
+  lazy_static! {
+    static ref RE: Regex = Regex::new(r"\[[^\[\]]+\]").unwrap();
+  }
+
+  if data.options.len() < 4 {
+    return Err(String::from("You must have a topic, date, and at least two options"))
+  }
+
+  let user = get_user(&interaction)?;
+  let mention = user.mention().to_string();
+  let author_id = user.id.0;
+
+  let channel = match interaction.channel_id {
+    Some(c) => c,
+    None => return Err(String::from("Must have channel id"))
+  };
+
+  let duration = {
+    let date_str = get_str_or_error(&data.options[1].value, "You must provide a time")?;
+    parse_time(&date_str)?
+  };
+
+  let topic_str = get_str_or_error(&data.options[0].value, "You must provide a topic")?;
+  let mut options: Vec<String> = vec![];
+
+  for option in &data.options[2..] {
+    if let Some(op) = &option.value {
+      if let Some(op_str) = op.as_str() {
+        options.push(String::from(op_str.trim()));
+        continue;
+      }
+    }
+
+    return Err(format!("Error parsing field {}. The value was {:?}", option.name, option.value))
+  }
+
+  let lock = {
+    let mut context = ctx.data.write().await;
+    context.get_mut::<RedisSchedulerKey>()
+      .expect("Expected redis scheduler")
+      .clone()
+  };
+
+  let time = (Utc::now() + duration).with_timezone(&EST5EDT);
+
+  let reactions: Vec<ReactionType> = EMOJI_ORDER[0..options.len()]
+    .iter()
+    .map(|emoji| ReactionType::Unicode(emoji.to_string()))
+    .collect();
+
+  if let Err(error) = interaction.create_interaction_response(&ctx.http, |resp| {
+    resp.kind(InteractionResponseType::ChannelMessageWithSource)
+    .interaction_response_data(|msg| msg
+      .content(format!("Poll: '{}' by {}", &topic_str, &mention))
+      .create_embed(|e| {
+        let mut description = String::from(">>> ");
+
+        for (count, option) in options.iter().enumerate() {
+          description += &format!("{}. {}\n", count + 1, &option);
+        }
+
+        let time_str = time.format("%D %r %Z");
+
+
+        e
+          .colour(Colour::BLITZ_BLUE)
+          .title(format!("Poll: {}", &topic_str))
+          .field("author", &mention, true)
+          .field("duration", format_duration(&duration), true)
+          .field("ends at", time_str, false)
+          .description(description)
+      })
+    )
+
+  }).await {
+    return Err(error.to_string())
+  }
+
+  let message = match interaction.get_interaction_response(&ctx.http).await {
+    Ok(msg) => msg,
+    Err(error) => return Err(error.to_string())
+  };
+
+  for react in reactions {
+    let _ = message.react(&ctx.http, react).await;
+  }
+
+  let poll = Poll {
+    author: author_id, 
+    channel: channel.0,
+    message: message.id.0,
+    topic: topic_str
+  };
+
+  {
+    let mut redis_scheduler = lock.lock().await;
+    match redis_scheduler.schedule_job(&Task::Poll(poll), time.timestamp()) {
+      Ok(_) => Ok(()),
+      Err(error) => Err(error.to_string())
+    }
+  }
+}
 
 #[command]
 #[usage("time topic options_list")]

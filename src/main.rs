@@ -1,12 +1,13 @@
 mod commands;
 mod util;
 
+use std::{collections::{HashMap, HashSet}, env::var, sync::Arc, time::Duration};
+
 use chrono::{Datelike, Utc};
 use chrono_tz::EST5EDT;
-use rand::{
-  distributions::Alphanumeric, Rng,thread_rng
-};
+use rand::{distributions::Alphanumeric, Rng,thread_rng};
 use redis::{Client, Commands, RedisResult};
+use serde_json::json;
 use serenity::{
   async_trait,
   client::{Client as DiscordClient, bridge::gateway::GatewayIntents},
@@ -18,12 +19,16 @@ use serenity::{
   http::Http,
   model::{
     channel::{Message, Reaction}, id::{ChannelId, UserId},
+    interactions::{
+      Interaction,
+      InteractionData,
+      InteractionResponseType
+    }
   },
   prelude::{Context,EventHandler}
 };
 use tokio::{spawn, sync::Mutex, time };
 
-use std::{collections::{HashMap, HashSet}, env::var, sync::Arc, time::Duration};
 
 use commands::{
   events::*,
@@ -68,6 +73,28 @@ struct Handler;
 
 #[async_trait]
 impl EventHandler for Handler {
+  async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
+    if let Some(ref data) = interaction.data {
+      if let InteractionData::ApplicationCommand(app_data) = data {
+        if let Err(error) = match app_data.name.as_str() {
+          "cancel" => interaction_cancel(&ctx, &interaction, &app_data).await,
+          "leave" => interaction_leave(&ctx, &interaction, &app_data).await,
+          "poll" => interaction_poll(&ctx, &interaction, &app_data).await,
+          "reschedule" => interaction_reschedule(&ctx, &interaction, &app_data).await,
+          "schedule" => interaction_schedule(&ctx, &interaction, &app_data).await,
+          "signup" => interaction_signup(&ctx, &interaction, &app_data).await,
+          "roll" => interaction_roll(&ctx, &interaction, &app_data).await,
+          _ => Ok(())
+        } {
+          let _ = interaction.create_interaction_response(&ctx.http, |resp|
+            resp.kind(InteractionResponseType::ChannelMessageWithSource)
+            .interaction_response_data(|msg|
+              msg.content(format!("An error occurred: {}", error)))).await;
+        }
+      }
+    }
+  }
+
   async fn message(&self, ctx: Context, msg: Message) {
     if msg.author.bot {
       return;
@@ -311,23 +338,30 @@ async fn main() {
   let api_key = var("GOOGLE_API_KEY")
     .expect("Expected Google API key");
 
+  let app_id: u64 = var("RUST_APP_ID")
+    .expect("Expected an application id in the environment")
+    .parse().expect("application id is not a valid id");
+
   let birthday_announce_channel = var("SAFETY_ANNOUNCEMENT_CHANNEL")
     .expect("Expected birthday announcement channel")
     .parse::<u64>()
     .expect("Expected channel to be a number");
+
+  let guild_id = var("SAFETY_GUILD_ID")
+    .expect("expected a guild id for guild commands")
+    .parse::<u64>()
+    .expect("Expected the id to be a number");
 
   let birthday_sheet_id = var("SAFETY_GOOGLE_DOCS_LINK")
     .expect("Expected Safety Google Docs link");
 
   let birthday_vector = vec!("A2:A51", "J2:J51");
 
-
   let redis_url = var("SAFETY_REDIS_URL")
     .unwrap_or_else(|_| String::from("redis://127.0.0.1"));
 
   let token = &var("RUST_BOT").expect("token");
 
-  
   let http = Http::new_with_token(&token);
 
   let owners = {
@@ -348,6 +382,7 @@ async fn main() {
   
   let mut client = DiscordClient::builder(&token)
     .event_handler(Handler)
+    .application_id(app_id)
     .intents(GatewayIntents::all())
     .framework(StandardFramework::new()
     .configure(|c| c
@@ -469,6 +504,18 @@ async fn main() {
       data.insert::<RedisConnectionKey>(conn_key);
     }
   }
+
+  let res = client.cache_and_http.http.create_guild_application_commands(guild_id, &json!([
+    cancel_command(),
+    leave_command(),
+    reschedule_command(),
+    roll_command(),
+    schedule_command(),
+    signup_command(),
+    poll_command()
+  ])).await;
+
+  println!("{:?}", res);
 
   if let Err(why) = client.start().await {
     println!("An error occurred while running the client: {:?}", why);

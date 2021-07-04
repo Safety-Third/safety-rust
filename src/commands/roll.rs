@@ -1,17 +1,66 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
 use lazy_static::lazy_static;
 use rand::{Rng,thread_rng};
 use regex::Regex;
-
+use serde_json::{Value, json};
 use serenity::prelude::*;
 use serenity::model::prelude::*;
 use serenity::framework::standard::{
   Args, CommandResult, macros::command,
 };
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use super::util::{get_mention, handle_command_err};
 
-use super::util::handle_command_err;
+pub fn roll_command() -> Value {
+  let options: Vec<Value> = (1..=7).map(|idx| json!({
+    "type": ApplicationCommandOptionType::String,
+    "name": format!("die-{}", idx),
+    "description": "A die roll like 2d20+5 or 4d4dldh2+1 (4d4, drop low, 2 highest + 1)",
+    "required": idx == 1
+  })).collect();
+  
+  return json!({
+    "name": "roll",
+    "description": "Roll one to six dice groups",
+    "options": options
+  });
+}
+
+pub async fn interaction_roll(ctx: &Context, interaction: &Interaction,
+  data: &ApplicationCommandInteractionData) -> Result<(), String> {
+
+  let mut total_string = String::from(">>> ");
+
+  let mut total_sum: i32 = 0;
+
+  for option in &data.options {
+    if let Some(die) = &option.value {
+      if let Some(die_str) = die.as_str() {
+        match handle_roll(&die_str) {
+          Ok((count, message)) => {
+            total_sum += count;
+            total_string += &message;
+          },
+          Err(error) => return Err(error.to_string())
+        };
+      }
+    }
+  }
+
+  let mention = get_mention(&interaction)?;
+
+  let final_msg = format!("{}, you rolled a total of **{}**\n{}\n", 
+    mention, total_sum, total_string);
+
+  let _ = interaction.create_interaction_response(&ctx.http, |response| {
+    response.kind(InteractionResponseType::ChannelMessageWithSource)
+    .interaction_response_data(|message| message.content(final_msg))
+  }).await;
+
+  Ok(())
+}
 
 #[command]
 #[min_args(1)]

@@ -3,6 +3,7 @@
 use chrono::Duration;
 use lazy_static::lazy_static;
 use regex::Regex;
+use serde_json::{Value};
 use serenity::prelude::*;
 use serenity::model::prelude::*;
 
@@ -36,7 +37,6 @@ macro_rules! command_err {
   };
 }
 
-
 lazy_static!{
   /// https://unicode.org/reports/tr51/#EBNF_and_Regex
   pub static ref EMOJI_REGEX: Regex = Regex::new(r"(?x)
@@ -52,6 +52,26 @@ lazy_static!{
         | [\x{E0020}-\x{E007E}]+ \x{E007F} )?
       )*"
     ).unwrap();
+}
+
+pub fn get_user(interaction: &Interaction) -> Result<&User, &'static str> {
+  if let Some(member) = &interaction.member {
+    Ok(&member.user)
+  } else if let Some(user) = &interaction.user {
+    Ok(user)
+  } else {
+    Err("No user or member!")
+  }
+}
+
+pub fn get_mention(interaction: &Interaction) -> Result<String, &'static str> {
+  if let Some(member) = &interaction.member {
+    Ok(member.mention().to_string())
+  } else if let Some(user) = &interaction.user {
+    Ok(user.mention().to_string())
+  } else {
+    Err("No user or member!")
+  }
 }
 
 pub fn format_duration(duration: &Duration) -> String {
@@ -166,5 +186,16 @@ fn simple_pluralize(msg: &str, count: i64) -> String {
     format!("1 {}", msg)
   } else {
     format!("{} {}s", count, msg)
+  }
+}
+
+#[inline]
+pub fn get_str_or_error(op: &Option<Value>, fail_msg: &'static str) -> Result<String, String> {
+  match op {
+    Some(field) => match field.as_str() {
+      Some(res) => Ok(String::from(res)),
+      None => Err(String::from(fail_msg))
+    },
+    None => Err(String::from(fail_msg))
   }
 }
