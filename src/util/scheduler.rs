@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use redis::{
   Commands, Connection, FromRedisValue, 
   RedisError, RedisResult, Value,
@@ -262,8 +263,9 @@ impl<T: Callable<A> + DeserializeOwned + Serialize, A> Scheduler<T, A> {
     Ok(new_id)
   }
 }
-  
+
+#[async_trait]
 pub trait Callable<T> {
-  fn call(&self, arg: &T);
+  async fn call(&self, arg: &T);
 }
   

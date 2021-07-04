@@ -1,11 +1,10 @@
 use serenity::prelude::*;
 use serenity::model::prelude::*;
 use serenity::framework::standard::{
-  Args, CommandError, CommandResult,
-  macros::command,
+  Args, CommandResult, macros::command,
 };
 
-use super::util::*;
+use super::util::{get_channel_from_string, get_guild, handle_command_err};
 
 #[command]
 #[example("000000000000000000 this is a message")]
@@ -16,8 +15,8 @@ use super::util::*;
 #[usage("channel_id message")]
 /// Impersonate this bot in a given channel
 /// You must also be present in the channel to message it
-pub fn impersonate(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
-  let guild = get_guild(ctx, msg)?;
+pub async fn impersonate(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
+  let guild = get_guild(ctx, msg).await?;
   
   let arg_as_channel_id = args.parse::<u64>();
 
@@ -25,16 +24,16 @@ pub fn impersonate(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandR
     ChannelId(args.single::<u64>().unwrap())
   } else {
     let channel_name = args.single_quoted::<String>()?;
-    get_channel_from_string(ctx, &guild.read(), &channel_name)?
+    get_channel_from_string(&ctx, &guild, &channel_name).await?
   };
 
   let message = match args.remains() {
     Some(text) => text,
-    None => return command_err_str!("You must provide a message")
+    None => return handle_command_err(ctx, msg, "You must provide a message").await
   };
   
-  match channel_id.say(&ctx.http, format!("```{}```", message)) {
+  match channel_id.say(&ctx.http, format!("```{}```", message)).await {
     Ok(_) => Ok(()),
-    Err(error) => Err(CommandError(error.to_string()))
+    Err(error) => Err(Box::new(error))
   }
 }

@@ -1,5 +1,6 @@
-use clokwerk::ScheduleHandle;
-use parking_lot::Mutex;
+use std::sync::Arc;
+
+use async_trait::async_trait;
 use redis::Connection;
 use serde::{Serialize, Deserialize};
 use serenity::{
@@ -11,7 +12,7 @@ use serenity::{
     misc::Mentionable
   }
 };
-use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use crate::util::scheduler::{Callable, Scheduler as RedisScheduler};
 
@@ -29,7 +30,7 @@ impl Event {
   pub fn members_and_author(&self) -> String {
     let author = UserId(self.author).mention();
     if self.members.is_empty() {
-      author
+      author.to_string()
     } else {
       format!("{}, {}", author, self.members())
     }
@@ -39,26 +40,27 @@ impl Event {
   pub fn members(&self) -> String {
     self.members
       .iter()
-      .map(|member| UserId(*member).mention())
+      .map(|member| UserId(*member).mention().to_string())
       .collect::<Vec<String>>()
       .join(", ")
   }
 }
 
+#[async_trait]
 impl Callable<Arc<Http>> for Event {
-  fn call(&self, http: &Arc<Http>) {
+  async fn call(&self, http: &Arc<Http>) {
     let members = self.members();
     let author = UserId(self.author).mention();
 
     let send_result = ChannelId(self.channel).send_message(http, |m| {
       m.content(format!("Time for **{}** by {}\n{}", self.event, &author, &members))
-    });
+    }).await;
 
     if let Err(error) = send_result {
-      if let Ok(user) = UserId(self.author).to_user(http) {
+      if let Ok(user) = UserId(self.author).to_user(http).await {
         let _ = user.dm(http, |m| {
           m.content(&format!("Failed to hold event {}: {}", self.event, error))
-        });
+        }).await;
       }
     }
   }
@@ -86,14 +88,15 @@ pub struct Poll {
   pub topic: String
 }
 
+#[async_trait]
 impl Callable<Arc<Http>> for Poll {
-  fn call(&self, http: &Arc<Http>) {
+  async fn call(&self, http: &Arc<Http>) {
     let channel_id = ChannelId(self.channel);
 
-    let message = match channel_id.message(http, self.message) {
+    let message = match channel_id.message(http, self.message).await {
       Ok(msg) => msg,
       Err(error) => {
-        if let Ok(user) = UserId(self.author).to_user(http) {
+        if let Ok(user) = UserId(self.author).to_user(http).await {
           let _ = user.dm(http, |m| {
             m.content(&format!("Failed to conclude poll {}: {}", self.topic, error))
           });
@@ -170,7 +173,7 @@ impl Callable<Arc<Http>> for Poll {
     }
 
 
-    let _ = channel_id.say(http, result_msg);
+    let _ = channel_id.say(http, result_msg).await;
   }
 }
 
@@ -180,19 +183,16 @@ pub enum Task {
   Poll(Poll)
 }
 
+#[async_trait]
 impl Callable<Arc<Http>> for Task {
-  fn call(&self, http: &Arc<Http>) {
+  async fn call(&self, http: &Arc<Http>) {
     match self {
-      Task::Event(item) => item.call(&http),
-      Task::Poll(item) => item.call(&http)
+      Task::Event(item) => item.call(&http).await,
+      Task::Poll(item) => item.call(&http).await
     };
   }
 }
 
-pub struct ClokwerkSchedulerKey;
-impl TypeMapKey for ClokwerkSchedulerKey {
-  type Value = Arc<ScheduleHandle>;
-}
 
 pub struct RedisSchedulerKey;
 impl TypeMapKey for RedisSchedulerKey {
