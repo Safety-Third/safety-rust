@@ -69,7 +69,7 @@ pub async fn interaction_poll(ctx: &Context, interaction: &Interaction,
 
   let duration = {
     let date_str = get_str_or_error(&data.options[1].value, "You must provide a time")?;
-    parse_time(&date_str)?
+    parse_time(&date_str.trim())?
   };
 
   let topic_str = get_str_or_error(&data.options[0].value, "You must provide a topic")?;
