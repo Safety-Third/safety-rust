@@ -63,7 +63,7 @@ struct Roles;
 
 #[group]
 #[commands(
-  categories, consent, delete, delete_category, 
+  categories, consent, delete, delete_category,
   revoke, set_category, stats, uses, view_categories
 )]
 #[description = "Manage and view emoji stats"]
@@ -119,7 +119,7 @@ impl EventHandler for Handler {
         .clone()
     };
 
-    let mut data: HashMap<String, u64> = { 
+    let mut data: HashMap<String, u64> = {
       let mut redis_client = lock.lock().await;
       match redis_client.0.hgetall(&key) {
         Ok(result) => result,
@@ -148,7 +148,7 @@ impl EventHandler for Handler {
     for (key, val) in data.into_iter() {
       items.push((key, val));
     }
-  
+
     {
       let mut redis_client = lock.lock().await;
       let res: RedisResult<String> = redis_client.0.hset_multiple(key, &items);
@@ -157,7 +157,7 @@ impl EventHandler for Handler {
       }
     }
   }
-  
+
   async fn reaction_add(&self, ctx: Context, reaction: Reaction) {
     let guild_id = match reaction.guild_id {
       Some(id) => id,
@@ -187,7 +187,7 @@ impl EventHandler for Handler {
         .clone()
     };
 
-    let data: HashMap<String, u64> = { 
+    let data: HashMap<String, u64> = {
       let mut redis_client = lock.lock().await;
       match redis_client.0.hgetall(&key) {
         Ok(result) => result,
@@ -246,7 +246,7 @@ impl EventHandler for Handler {
         .clone()
     };
 
-    let data: HashMap<String, u64> = { 
+    let data: HashMap<String, u64> = {
       let mut redis_client = lock.lock().await;
       match redis_client.0.hgetall(&key) {
         Ok(result) => result,
@@ -319,7 +319,7 @@ async fn my_help(
 async fn after(ctx: &Context, msg: &Message, _name: &str, result: CommandResult) {
   if !msg.author.bot {
     if let Err(error) = result {
-      let _ = msg.channel_id.say(&ctx.http, 
+      let _ = msg.channel_id.say(&ctx.http,
         &format!("Error in {:?}:\n{}", msg.content, error)).await;
     }
   }
@@ -328,7 +328,7 @@ async fn after(ctx: &Context, msg: &Message, _name: &str, result: CommandResult)
 #[hook]
 async fn dispatch_error(ctx: &Context, msg: &Message, error: DispatchError) {
   if !msg.author.bot {
-    let _ = msg.channel_id.say(&ctx.http, 
+    let _ = msg.channel_id.say(&ctx.http,
       &format!("Error in {:?}:\n{:?}", msg.content, error)).await;
   }
 }
@@ -355,7 +355,7 @@ async fn main() {
   let birthday_sheet_id = var("SAFETY_GOOGLE_DOCS_LINK")
     .expect("Expected Safety Google Docs link");
 
-  let birthday_vector = vec!("A2:A51", "J2:J51");
+  let birthday_vector = vec!("'2018-2019 Roster'!A2:A51", "'2018-2019 Roster'!J2:J51");
 
   let redis_url = var("SAFETY_REDIS_URL")
     .unwrap_or_else(|_| String::from("redis://127.0.0.1"));
@@ -379,7 +379,7 @@ async fn main() {
       Err(why) => panic!("Could not access application info: {:?}", why),
     }
   };
-  
+
   let mut client = DiscordClient::builder(&token)
     .event_handler(Handler)
     .application_id(app_id)
@@ -417,14 +417,14 @@ async fn main() {
     let persistent_connection = redis_client.get_connection()
       .expect("Should be able to create a second redis connection");
 
-    let redis_scheduler: RedisScheduler<Task, Arc<Http>> = 
+    let redis_scheduler: RedisScheduler<Task, Arc<Http>> =
       RedisScheduler::new(connection, Some(Box::new(generator)), None, None);
 
     let redis_scheduler_arc = Arc::new(Mutex::new(redis_scheduler));
 
     let lock = redis_scheduler_arc.clone();
 
-    
+
     spawn(async move {
       let mut interval = time::interval(Duration::from_secs(5));
 
@@ -448,7 +448,7 @@ async fn main() {
             Err(error) => println!("{:?}", error)
           };
         });
-       
+
 
         interval.tick().await;
       };
@@ -466,33 +466,40 @@ async fn main() {
 
         time::sleep(duration_to_sleep).await;
 
-        if let Ok(sheet) = query(&api_key, &birthday_sheet_id, &birthday_vector).await {
-          if sheet.value_ranges.len() != 2 {
+        match query(&api_key, &birthday_sheet_id, &birthday_vector).await {
+          Ok(sheet) => {
+            if sheet.value_ranges.len() != 2 {
+              println!("Sheet has more than two ranges: {:?}", sheet);
+              return;
+            }
+
+            for idx in 0..49 {
+              let potential_date = &sheet.value_ranges[1].values[idx];
+              let potential_name = &sheet.value_ranges[0].values[idx];
+
+              if potential_date.len() != 1 || potential_name.len() != 1 {
+                continue;
+              }
+
+              let (month, day, year) = match parse_date(&potential_date[0]) {
+                Ok(result) => result,
+                Err(_) => continue
+              };
+
+              if next_time.day() == day && next_time.month() == month {
+                let msg = format!("Happy birthday {}! ({} years)!",
+                  potential_name[0], next_time.year() - year);
+
+                let result = ChannelId(birthday_announce_channel).say(&http_clone, msg).await;
+                println!("{:?}", result);
+              }
+            }
+          },
+          Err(error) => {
+            println!("Failed to execute query: {:?}", error);
             return;
           }
-          
-          for idx in 0..49 {
-            let potential_date = &sheet.value_ranges[1].values[idx];
-            let potential_name = &sheet.value_ranges[0].values[idx];
-  
-            if potential_date.len() != 1 || potential_name.len() != 1 {
-              continue;
-            }
-  
-            let (month, day, year) = match parse_date(&potential_date[0]) {
-              Ok(result) => result,
-              Err(_) => continue
-            };
-  
-            if next_time.day() == day && next_time.month() == month {
-              let msg = format!("Happy birthday {}! ({} years)!",
-                potential_name[0], next_time.year() - year);
-  
-              let result = ChannelId(birthday_announce_channel).say(&http_clone, msg).await;
-              println!("{:?}", result);
-            }
-          }
-        }
+        };
       }
     });
 
@@ -505,7 +512,7 @@ async fn main() {
     }
   }
 
-  let res = client.cache_and_http.http.create_guild_application_commands(guild_id, &json!([
+  client.cache_and_http.http.create_guild_application_commands(guild_id, &json!([
     cancel_command(),
     leave_command(),
     reschedule_command(),
@@ -513,9 +520,9 @@ async fn main() {
     schedule_command(),
     signup_command(),
     poll_command()
-  ])).await;
-
-  println!("{:?}", res);
+  ]))
+    .await
+    .expect("Should be able to create");
 
   if let Err(why) = client.start().await {
     println!("An error occurred while running the client: {:?}", why);
