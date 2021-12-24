@@ -9,8 +9,9 @@ use std::{
   collections::{BTreeMap, HashMap}, io::{Error, ErrorKind::Other}
 };
 
+use crate::util::scheduler::RedisConnectionKey;
 use super::{
-  types::{RedisConnectionKey}, util::{EMOJI_REGEX, get_guild, handle_command_err}
+  util::{EMOJI_REGEX, get_guild, handle_command_err}
 };
 
 macro_rules! redis_error {

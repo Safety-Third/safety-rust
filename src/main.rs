@@ -18,7 +18,7 @@ use serenity::{
   },
   http::Http,
   model::{
-    channel::{Message, Reaction}, id::{ChannelId, UserId},
+    channel::{Message, Reaction, ReactionType}, id::{ChannelId, UserId},
     interactions::{
       Interaction,
       InteractionData,
@@ -27,22 +27,23 @@ use serenity::{
   },
   prelude::{Context,EventHandler}
 };
-use tokio::{spawn, sync::Mutex, time };
+use tokio::{spawn, sync::Mutex, time};
 
 
 use commands::{
-  events::*,
   impersonate::*,
   poll::*,
   roles::*,
   roll::*,
   stats::*,
-  types::{RedisSchedulerKey, RedisConnectionKey, RedisWrapper, Task},
   util::{EMOJI_REGEX, get_guild}
 };
 
 use util::{
-  scheduler::{Callable, Scheduler as RedisScheduler},
+  scheduler::{
+    Callable, PollCache, RedisSchedulerKey, 
+    RedisConnectionKey, RedisWrapper, Scheduler as RedisScheduler
+  },
   sheets::{parse_date, query},
 };
 
@@ -50,11 +51,6 @@ use util::{
 #[commands(impersonate, poll, roll)]
 #[description = "General commands"]
 struct General;
-
-#[group]
-#[commands(cancel, leave, reschedule, schedule, signup)]
-#[description = "Create and manage events"]
-struct Event;
 
 #[group]
 #[commands(add_roles, remove_roles, set_roles)]
@@ -77,12 +73,7 @@ impl EventHandler for Handler {
     if let Some(ref data) = interaction.data {
       if let InteractionData::ApplicationCommand(app_data) = data {
         if let Err(error) = match app_data.name.as_str() {
-          "cancel" => interaction_cancel(&ctx, &interaction, &app_data).await,
-          "leave" => interaction_leave(&ctx, &interaction, &app_data).await,
           "poll" => interaction_poll(&ctx, &interaction, &app_data).await,
-          "reschedule" => interaction_reschedule(&ctx, &interaction, &app_data).await,
-          "schedule" => interaction_schedule(&ctx, &interaction, &app_data).await,
-          "signup" => interaction_signup(&ctx, &interaction, &app_data).await,
           "roll" => interaction_roll(&ctx, &interaction, &app_data).await,
           _ => Ok(())
         } {
@@ -177,7 +168,7 @@ impl EventHandler for Handler {
       Some(id) => id,
       None => return
     };
-
+    
     let key = format!("{}:{}", user_id.0, guild_id);
 
     let lock = {
@@ -187,34 +178,79 @@ impl EventHandler for Handler {
         .clone()
     };
 
-    let data: HashMap<String, u64> = {
+    let (data, poll_cache): (HashMap<String, u64>, Option<PollCache>) = {
       let mut redis_client = lock.lock().await;
-      match redis_client.0.hgetall(&key) {
+      
+      let consent_data = match redis_client.0.hgetall(&key) {
         Ok(result) => result,
-        Err(_) => HashMap::new()
-      }
+        Err(error) => {
+          println!("Error attempting to access redis: {}", error);
+          return;
+        }
+      };
+
+      let author_id: Option<PollCache> = match redis_client.0.get::<u64, Option<Vec<u8>>>(reaction.message_id.0) {
+        Ok(data) => match data {
+          Some(real_data) => match bincode::deserialize(&real_data) {
+            Ok(result) => Some(result),
+            Err(error) => {
+              println!("Error deserializing poll cache data: {}", error);
+              None
+            }
+          },
+          None => None
+        },
+        Err(error) => {
+          println!("Error attempting to access redis: {}", error);
+          return;
+        }
+      };
+
+      (consent_data, author_id)
     };
 
-    if data.get("consent") != Some(&1) {
-      return;
+    let is_delete = if let Some(ref cache) = poll_cache {
+      cache.author == user.id.0 && reaction.emoji == ReactionType::Unicode(String::from("❌"))
+    } else {
+      false
+    };
+
+    if data.get("consent") == Some(&1) && !is_delete {
+      let emoji_str = format!("{}", reaction.emoji);
+
+      let new_data = match data.get(&emoji_str) {
+        Some(old) => old + 1,
+        None => 1
+      };
+  
+      {
+        let mut redis_client = lock.lock().await;
+        let res: RedisResult<u64> = redis_client.0.hset(&key, emoji_str, new_data);
+  
+        if let Err(error) = res {
+          println!("{:?}", error);
+        }
+      };
+    } else if is_delete {
+      // this unwrap is safe
+      let cache = poll_cache.unwrap();
+      let _ = ctx.http.delete_message(reaction.channel_id.0, reaction.message_id.0).await;
+
+      {
+        let mut context = ctx.data.write().await;
+        let scheduler = context.get_mut::<RedisSchedulerKey>()
+          .expect("Expected redis scheduler")
+          .clone();
+
+        let result = scheduler.lock()
+          .await
+          .remove_job(&cache.id, reaction.message_id.0);
+
+        if let Err(error) = result {
+          println!("Error deleting job {}: {}", &cache.id, error);
+        }
+      };
     }
-
-    let emoji_str = format!("{}", reaction.emoji);
-
-    let new_data = match data.get(&emoji_str) {
-      Some(old) => old + 1,
-      None => 1
-    };
-
-
-    {
-      let mut redis_client = lock.lock().await;
-      let res: RedisResult<u64> = redis_client.0.hset(&key, emoji_str, new_data);
-
-      if let Err(error) = res {
-        println!("{:?}", error);
-      }
-    };
   }
 
   async fn reaction_remove(&self, ctx: Context, reaction: Reaction) {
@@ -389,7 +425,6 @@ async fn main() {
       .owners(owners)
       .prefixes(vec![">", "~"]))
     .help(&MY_HELP)
-    .group(&EVENT_GROUP)
     .group(&GENERAL_GROUP)
     .group(&ROLES_GROUP)
     .group(&STATS_GROUP)
@@ -417,13 +452,12 @@ async fn main() {
     let persistent_connection = redis_client.get_connection()
       .expect("Should be able to create a second redis connection");
 
-    let redis_scheduler: RedisScheduler<Task, Arc<Http>> =
+    let redis_scheduler =
       RedisScheduler::new(connection, Some(Box::new(generator)), None, None);
 
     let redis_scheduler_arc = Arc::new(Mutex::new(redis_scheduler));
 
     let lock = redis_scheduler_arc.clone();
-
 
     spawn(async move {
       let mut interval = time::interval(Duration::from_secs(5));
@@ -513,12 +547,7 @@ async fn main() {
   }
 
   client.cache_and_http.http.create_guild_application_commands(guild_id, &json!([
-    cancel_command(),
-    leave_command(),
-    reschedule_command(),
     roll_command(),
-    schedule_command(),
-    signup_command(),
     poll_command()
   ]))
     .await

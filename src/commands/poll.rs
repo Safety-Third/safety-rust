@@ -8,8 +8,8 @@ use serenity::{
   model::prelude::*, prelude::*, utils::Colour,
 };
 
+use crate::util::scheduler::{EMOJI_ORDER, Poll, RedisSchedulerKey};
 use super::{ 
-  types::{EMOJI_ORDER, Poll, RedisSchedulerKey, Task},
   util::{format_duration, get_str_or_error, get_user}
 };
 
@@ -50,9 +50,6 @@ pub fn poll_command() -> Value {
 
 pub async fn interaction_poll(ctx: &Context, interaction: &Interaction,
   data: &ApplicationCommandInteractionData) -> Result<(), String> {
-  lazy_static! {
-    static ref RE: Regex = Regex::new(r"\[[^\[\]]+\]").unwrap();
-  }
 
   if data.options.len() < 4 {
     return Err(String::from("You must have a topic, date, and at least two options"))
@@ -113,7 +110,6 @@ pub async fn interaction_poll(ctx: &Context, interaction: &Interaction,
 
         let time_str = time.format("%D %r %Z");
 
-
         e
           .colour(Colour::BLITZ_BLUE)
           .title(format!("Poll: {}", &topic_str))
@@ -121,6 +117,9 @@ pub async fn interaction_poll(ctx: &Context, interaction: &Interaction,
           .field("duration", format_duration(&duration), true)
           .field("ends at", time_str, false)
           .description(description)
+          .footer(|f| {
+            f.text("React with x to cancel this poll")
+          })
       })
     )
 
@@ -137,6 +136,8 @@ pub async fn interaction_poll(ctx: &Context, interaction: &Interaction,
     let _ = message.react(&ctx.http, react).await;
   }
 
+  let _ = message.react(&ctx.http, ReactionType::Unicode(String::from("❌"))).await;
+
   let poll = Poll {
     author: author_id, 
     channel: channel.0,
@@ -146,7 +147,7 @@ pub async fn interaction_poll(ctx: &Context, interaction: &Interaction,
 
   {
     let mut redis_scheduler = lock.lock().await;
-    match redis_scheduler.schedule_job(&Task::Poll(poll), time.timestamp()) {
+    match redis_scheduler.schedule_job(&poll, time.timestamp(), duration.num_seconds()) {
       Ok(_) => Ok(()),
       Err(error) => Err(error.to_string())
     }
@@ -259,7 +260,7 @@ pub async fn poll(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult
 
   {
     let mut redis_scheduler = lock.lock().await;
-    redis_scheduler.schedule_job(&Task::Poll(poll), time.timestamp())?
+    redis_scheduler.schedule_job(&poll, time.timestamp(), duration.num_seconds())?
   };
   
   Ok(())
