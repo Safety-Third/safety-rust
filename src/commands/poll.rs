@@ -118,7 +118,7 @@ pub async fn interaction_poll(ctx: &Context, interaction: &Interaction,
           .field("ends at", time_str, false)
           .description(description)
           .footer(|f| {
-            f.text("React with x to cancel this poll")
+            f.text("Creator can react with x to cancel this poll")
           })
       })
     )

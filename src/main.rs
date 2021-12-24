@@ -189,28 +189,32 @@ impl EventHandler for Handler {
         }
       };
 
-      let author_id: Option<PollCache> = match redis_client.0.get::<u64, Option<Vec<u8>>>(reaction.message_id.0) {
-        Ok(data) => match data {
-          Some(real_data) => match bincode::deserialize(&real_data) {
-            Ok(result) => Some(result),
-            Err(error) => {
-              println!("Error deserializing poll cache data: {}", error);
-              None
-            }
+      let author_id: Option<PollCache> = if reaction.emoji == ReactionType::Unicode(String::from("❌")) {
+        match redis_client.0.get::<u64, Option<Vec<u8>>>(reaction.message_id.0) {
+          Ok(data) => match data {
+            Some(real_data) => match bincode::deserialize(&real_data) {
+              Ok(result) => Some(result),
+              Err(error) => {
+                println!("Error deserializing poll cache data: {}", error);
+                None
+              }
+            },
+            None => None
           },
-          None => None
-        },
-        Err(error) => {
-          println!("Error attempting to access redis: {}", error);
-          return;
+          Err(error) => {
+            println!("Error attempting to access redis: {}", error);
+            return;
+          }
         }
+      } else {
+        None
       };
-
+      
       (consent_data, author_id)
     };
 
     let is_delete = if let Some(ref cache) = poll_cache {
-      cache.author == user.id.0 && reaction.emoji == ReactionType::Unicode(String::from("❌"))
+      cache.author == user.id.0
     } else {
       false
     };
