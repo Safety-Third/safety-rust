@@ -329,14 +329,14 @@ impl EventHandler for Handler {
 
   async fn cache_ready(&self, ctx: Context, _guilds: Vec<GuildId>) {
     let statuses = [
-      "What is Jeff?", "horse plinko", "7 blunders", "the missile knows on loop"
+      "What is Jeff?", "horse plinko", "7 blunders", "the missile knows", "fight me"
     ];
 
     if !self.loop_running.load(Ordering::Relaxed) {
       let ctx_clone = Arc::new(ctx);
 
       spawn(async move {
-        let mut interval = interval(Duration::from_secs(60 * 30));
+        let mut interval = interval(Duration::from_secs(60 * 5));
 
         loop {
           interval.tick().await;
