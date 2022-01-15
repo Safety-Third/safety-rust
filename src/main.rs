@@ -1,11 +1,14 @@
 mod commands;
 mod util;
 
-use std::{collections::{HashMap, HashSet}, env::var, sync::Arc, time::Duration};
+use std::{
+  collections::{HashMap, HashSet}, env::var,
+  sync::{atomic::{AtomicBool, Ordering}, Arc}, time::Duration
+};
 
 use chrono::{Datelike, Utc};
 use chrono_tz::EST5EDT;
-use rand::{distributions::Alphanumeric, Rng,thread_rng};
+use rand::{distributions::Alphanumeric, Rng, thread_rng};
 use redis::{Client, Commands, RedisResult};
 use serde_json::json;
 use serenity::{
@@ -18,20 +21,19 @@ use serenity::{
   },
   http::Http,
   model::{
-    channel::{Message, Reaction, ReactionType}, id::{ChannelId, UserId},
+    channel::{Message, Reaction, ReactionType}, 
+    gateway::Activity, id::{ChannelId, GuildId, UserId},
     interactions::{
-      Interaction,
-      InteractionData,
-      InteractionResponseType
+      Interaction, InteractionData, InteractionResponseType
     }
   },
   prelude::{Context,EventHandler}
 };
-use tokio::{spawn, sync::Mutex, time};
-
+use tokio::{spawn, sync::{Mutex, RwLock}, time::{interval, sleep}};
 
 use commands::{
   impersonate::*,
+  nya::*,
   poll::*,
   roles::*,
   roll::*,
@@ -65,7 +67,9 @@ struct Roles;
 #[description = "Manage and view emoji stats"]
 struct Stats;
 
-struct Handler;
+struct Handler {
+  loop_running: AtomicBool
+}
 
 #[async_trait]
 impl EventHandler for Handler {
@@ -73,6 +77,7 @@ impl EventHandler for Handler {
     if let Some(ref data) = interaction.data {
       if let InteractionData::ApplicationCommand(app_data) = data {
         if let Err(error) = match app_data.name.as_str() {
+          "nya" => interaction_nya(&ctx, &interaction, &app_data).await,
           "poll" => interaction_poll(&ctx, &interaction, &app_data).await,
           "roll" => interaction_roll(&ctx, &interaction, &app_data).await,
           _ => Ok(())
@@ -321,6 +326,28 @@ impl EventHandler for Handler {
       }
     };
   }
+
+  async fn cache_ready(&self, ctx: Context, _guilds: Vec<GuildId>) {
+    let statuses = [
+      "What is Jeff?", "horse plinko", "7 blunders", "the missile knows on loop"
+    ];
+
+    if !self.loop_running.load(Ordering::Relaxed) {
+      let ctx_clone = Arc::new(ctx);
+
+      spawn(async move {
+        let mut interval = interval(Duration::from_secs(60 * 30));
+
+        loop {
+          interval.tick().await;
+          let idx: usize = thread_rng().gen_range(0, statuses.len());
+          ctx_clone.set_activity(Activity::playing(statuses[idx])).await;
+        };
+      });
+
+      self.loop_running.swap(true, Ordering::Relaxed);
+    }
+  }
 }
 
 #[help]
@@ -402,6 +429,7 @@ async fn main() {
 
   let token = &var("RUST_BOT").expect("token");
 
+
   let http = Http::new_with_token(&token);
 
   let owners = {
@@ -421,7 +449,9 @@ async fn main() {
   };
 
   let mut client = DiscordClient::builder(&token)
-    .event_handler(Handler)
+    .event_handler(Handler {
+      loop_running: AtomicBool::new(false)
+    })
     .application_id(app_id)
     .intents(GatewayIntents::all())
     .framework(StandardFramework::new()
@@ -436,6 +466,16 @@ async fn main() {
     .on_dispatch_error(dispatch_error))
     .await
     .expect("Error creating client");
+
+  let cat_api_key = var("SAFETY_CAT_KEY")
+    .expect("Expected an API key for cats");
+
+  {
+    let cat_key = Arc::new(RwLock::new(cat_api_key));
+
+    let mut data = client.data.write().await;
+    data.insert::<CatKey>(cat_key);
+  }
 
   {
     let http_arc = Arc::new(http);
@@ -464,7 +504,7 @@ async fn main() {
     let lock = redis_scheduler_arc.clone();
 
     spawn(async move {
-      let mut interval = time::interval(Duration::from_secs(5));
+      let mut interval = interval(Duration::from_secs(5));
 
       loop {
         let jobs = {
@@ -502,7 +542,7 @@ async fn main() {
         let duration_to_sleep = next_time.signed_duration_since(now)
           .to_std().unwrap();
 
-        time::sleep(duration_to_sleep).await;
+        sleep(duration_to_sleep).await;
 
         match query(&api_key, &birthday_sheet_id, &birthday_vector).await {
           Ok(sheet) => {
@@ -552,7 +592,8 @@ async fn main() {
 
   client.cache_and_http.http.create_guild_application_commands(guild_id, &json!([
     roll_command(),
-    poll_command()
+    poll_command(),
+    nya_command()
   ]))
     .await
     .expect("Should be able to create");
