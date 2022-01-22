@@ -5,10 +5,12 @@ use lazy_static::lazy_static;
 use rand::{Rng,thread_rng};
 use regex::Regex;
 use serde_json::{Value, json};
-use serenity::prelude::*;
-use serenity::model::prelude::*;
-use serenity::framework::standard::{
-  Args, CommandResult, macros::command,
+use serenity::{
+  prelude::*, model::prelude::*,
+  model::prelude::interactions::application_command::*,
+  framework::standard::{
+    Args, CommandResult, macros::command
+  }
 };
 
 use super::util::{get_mention, handle_command_err};
@@ -20,7 +22,7 @@ pub fn roll_command() -> Value {
     "description": "A die roll like 2d20+5 or 4d4dldh2+1 (4d4, drop low, 2 highest + 1)",
     "required": idx == 1
   })).collect();
-  
+
   return json!({
     "name": "roll",
     "description": "Roll one to six dice groups",
@@ -28,8 +30,10 @@ pub fn roll_command() -> Value {
   });
 }
 
-pub async fn interaction_roll(ctx: &Context, interaction: &Interaction,
-  data: &ApplicationCommandInteractionData) -> Result<(), String> {
+pub async fn interaction_roll(ctx: &Context,
+  interaction: &ApplicationCommandInteraction) -> Result<(), String> {
+
+  let data = &interaction.data;
 
   let mut total_string = String::from(">>> ");
 
@@ -49,9 +53,9 @@ pub async fn interaction_roll(ctx: &Context, interaction: &Interaction,
     }
   }
 
-  let mention = get_mention(&interaction)?;
+  let mention = get_mention(&interaction);
 
-  let final_msg = format!("{}, you rolled a total of **{}**\n{}\n", 
+  let final_msg = format!("{}, you rolled a total of **{}**\n{}\n",
     mention, total_sum, total_string);
 
   let _ = interaction.create_interaction_response(&ctx.http, |response| {
@@ -74,19 +78,19 @@ pub async fn interaction_roll(ctx: &Context, interaction: &Interaction,
 /// Rolls one or more dice. Dice rolls should be in this general form:
 /// "int"d"int"
 /// >roll 1d20
-/// 
+///
 /// You can also add modifiers to the roll:
 /// +/-"int"
-/// >roll 3d8+5 
-/// 
+/// >roll 3d8+5
+///
 /// And you can drop the n highest/lowest rolls:
 /// dl"int"dh"int" (you can omit "int" to drop 1)
 /// >roll 8d10dl2: drop 2 lowest
 /// >roll 8d10dh: drop highest
 /// >roll 8d10dldh: drop lowest and highest
-/// 
+///
 /// Put together, we have:
-/// "int"d"int"+/-"int"dl"int"dh"int" 
+/// "int"d"int"+/-"int"dl"int"dh"int"
 /// >roll 10d20+2dl2dh2: 10 d 20s, +2, drop 2 lowest and highest
 pub async fn roll(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
   let mut total_string = String::from(">>> ");
@@ -103,8 +107,8 @@ pub async fn roll(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
     };
   }
 
-  let _ = msg.channel_id.say(&ctx.http, 
-    format!("{}, you rolled a total of **{}**\n{}\n", 
+  let _ = msg.channel_id.say(&ctx.http,
+    format!("{}, you rolled a total of **{}**\n{}\n",
       msg.author.mention(), total_sum, total_string)).await;
 
   Ok(())
@@ -120,7 +124,7 @@ fn handle_roll(roll_str: &str) -> Result<(i32, String), String> {
       (dh(?P<high>\d*))?        # how many lows to drop"
     ).unwrap();
   }
-  
+
   let caps = match RE.captures(roll_str) {
     Some(captures) => captures,
     None =>  return error_hash(roll_str, "Not a valid die roll")
@@ -183,7 +187,7 @@ fn handle_roll(roll_str: &str) -> Result<(i32, String), String> {
     },
     None => 0
   };
-  
+
   if low + high >= count {
     return error_hash(roll_str, &format!(
       "You want to drop {} dice but are only rolling {}. What are you even doing?",
@@ -215,11 +219,11 @@ fn handle_roll(roll_str: &str) -> Result<(i32, String), String> {
     result_str += &format!(" + {}", addition);
   }
 
-  if low > 0 {    
+  if low > 0 {
     result_str += &format!(", drop {} low", low);
   }
 
-  if high > 0 {    
+  if high > 0 {
     result_str += &format!(", drop {} high", high);
   }
 
@@ -252,7 +256,7 @@ fn handle_roll(roll_str: &str) -> Result<(i32, String), String> {
 fn error_hash(die: &str, error: &str) -> Result<(i32, String), String> {
   let mut s = DefaultHasher::new();
   die.hash(&mut s);
-  
+
   let hashed_val = (s.finish() % 1000) as u32;
 
   let rng = thread_rng().gen_range(1, hashed_val + 1);

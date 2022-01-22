@@ -3,7 +3,10 @@ use std::sync::Arc;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use serenity::{model::prelude::*, prelude::*, utils::Colour};
+use serenity::{
+  model::interactions::application_command::ApplicationCommandInteraction,
+  model::prelude::*, prelude::*, utils::Colour
+};
 use tokio::sync::RwLock;
 
 pub struct CatKey;
@@ -27,8 +30,7 @@ pub fn nya_command() -> Value {
   })
 }
 
-pub async fn interaction_nya(ctx: &Context, interaction: &Interaction,
-  _data: &ApplicationCommandInteractionData) -> Result<(), String> {
+pub async fn interaction_nya(ctx: &Context, interaction: &ApplicationCommandInteraction) -> Result<(), String> {
 
   let key = {
     let data_read = ctx.data.read().await;

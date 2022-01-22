@@ -21,10 +21,11 @@ use serenity::{
   },
   http::Http,
   model::{
-    channel::{Message, Reaction, ReactionType}, 
+    channel::{Message, Reaction},
     gateway::Activity, id::{ChannelId, GuildId, UserId},
     interactions::{
-      Interaction, InteractionData, InteractionResponseType
+      message_component::InteractionMessage,
+      Interaction, InteractionResponseType
     }
   },
   prelude::{Context,EventHandler}
@@ -43,7 +44,7 @@ use commands::{
 
 use util::{
   scheduler::{
-    Callable, PollCache, RedisSchedulerKey, 
+    Callable, RedisSchedulerKey,
     RedisConnectionKey, RedisWrapper, Scheduler as RedisScheduler
   },
   sheets::{parse_date, query},
@@ -74,20 +75,58 @@ struct Handler {
 #[async_trait]
 impl EventHandler for Handler {
   async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
-    if let Some(ref data) = interaction.data {
-      if let InteractionData::ApplicationCommand(app_data) = data {
-        if let Err(error) = match app_data.name.as_str() {
-          "nya" => interaction_nya(&ctx, &interaction, &app_data).await,
-          "poll" => interaction_poll(&ctx, &interaction, &app_data).await,
-          "roll" => interaction_roll(&ctx, &interaction, &app_data).await,
+    match interaction {
+      Interaction::ApplicationCommand(app_command) => {
+        if let Err(error) = match app_command.data.name.as_str() {
+          "nya" => interaction_nya(&ctx, &app_command).await,
+          "poll" => interaction_poll(&ctx, &app_command).await,
+          "roll" => interaction_roll(&ctx, &app_command).await,
           _ => Ok(())
         } {
-          let _ = interaction.create_interaction_response(&ctx.http, |resp|
+          let _ = app_command.create_interaction_response(&ctx.http, |resp|
             resp.kind(InteractionResponseType::ChannelMessageWithSource)
             .interaction_response_data(|msg|
               msg.content(format!("An error occurred: {}", error)))).await;
         }
-      }
+      },
+      Interaction::MessageComponent(comp_inter) => {
+        let message = if let InteractionMessage::Regular(ref msg) = comp_inter.message {
+          if msg.mentions.len() == 1 && comp_inter.user == msg.mentions[0] {
+            Some(msg)
+          } else {
+            None
+          }
+        } else {
+          None
+        };
+
+        if let Some(msg) = message {
+          if let Err(error) = msg.delete(&ctx.http).await {
+            let _ = comp_inter.create_interaction_response(&ctx.http, |resp| {
+              resp.kind(InteractionResponseType::ChannelMessageWithSource)
+                .interaction_response_data(|msg| msg
+                  .content(format!("Could not delete poll: {}", error)))
+            });
+          } else {
+            let lock = {
+              let mut context = ctx.data.write().await;
+              context.get_mut::<RedisSchedulerKey>()
+                .expect("Expected redis instance")
+                .clone()
+            };
+
+            {
+              let mut redis_scheduler = lock.lock().await;
+              let _ = redis_scheduler.remove_job(msg.id.0);
+            };
+          }
+        } else {
+          let _ = comp_inter.create_interaction_response(&ctx.http, |resp| {
+            resp.kind(InteractionResponseType::DeferredUpdateMessage)
+          }).await;
+        };
+      },
+      _ => {}
     }
   }
 
@@ -173,7 +212,7 @@ impl EventHandler for Handler {
       Some(id) => id,
       None => return
     };
-    
+
     let key = format!("{}:{}", user_id.0, guild_id);
 
     let lock = {
@@ -183,83 +222,34 @@ impl EventHandler for Handler {
         .clone()
     };
 
-    let (data, poll_cache): (HashMap<String, u64>, Option<PollCache>) = {
+    let data: HashMap<String, u64> = {
       let mut redis_client = lock.lock().await;
-      
-      let consent_data = match redis_client.0.hgetall(&key) {
+
+      match redis_client.0.hgetall(&key) {
         Ok(result) => result,
-        Err(error) => {
-          println!("Error attempting to access redis: {}", error);
-          return;
-        }
-      };
-
-      let author_id: Option<PollCache> = if reaction.emoji == ReactionType::Unicode(String::from("❌")) {
-        match redis_client.0.get::<u64, Option<Vec<u8>>>(reaction.message_id.0) {
-          Ok(data) => match data {
-            Some(real_data) => match bincode::deserialize(&real_data) {
-              Ok(result) => Some(result),
-              Err(error) => {
-                println!("Error deserializing poll cache data: {}", error);
-                None
-              }
-            },
-            None => None
-          },
-          Err(error) => {
-            println!("Error attempting to access redis: {}", error);
-            return;
-          }
-        }
-      } else {
-        None
-      };
-      
-      (consent_data, author_id)
+        Err(_) => HashMap::new()
+      }
     };
 
-    let is_delete = if let Some(ref cache) = poll_cache {
-      cache.author == user.id.0
-    } else {
-      false
-    };
-
-    if data.get("consent") == Some(&1) && !is_delete {
-      let emoji_str = format!("{}", reaction.emoji);
-
-      let new_data = match data.get(&emoji_str) {
-        Some(old) => old + 1,
-        None => 1
-      };
-  
-      {
-        let mut redis_client = lock.lock().await;
-        let res: RedisResult<u64> = redis_client.0.hset(&key, emoji_str, new_data);
-  
-        if let Err(error) = res {
-          println!("{:?}", error);
-        }
-      };
-    } else if is_delete {
-      // this unwrap is safe
-      let cache = poll_cache.unwrap();
-      let _ = ctx.http.delete_message(reaction.channel_id.0, reaction.message_id.0).await;
-
-      {
-        let mut context = ctx.data.write().await;
-        let scheduler = context.get_mut::<RedisSchedulerKey>()
-          .expect("Expected redis scheduler")
-          .clone();
-
-        let result = scheduler.lock()
-          .await
-          .remove_job(&cache.id, reaction.message_id.0);
-
-        if let Err(error) = result {
-          println!("Error deleting job {}: {}", &cache.id, error);
-        }
-      };
+    if data.get("consent") != Some(&1) {
+      return
     }
+
+    let emoji_str = format!("{}", reaction.emoji);
+
+    let new_data = match data.get(&emoji_str) {
+      Some(old) => old + 1,
+      None => 1
+    };
+
+    {
+      let mut redis_client = lock.lock().await;
+      let res: RedisResult<u64> = redis_client.0.hset(&key, emoji_str, new_data);
+
+      if let Err(error) = res {
+        println!("{:?}", error);
+      }
+    };
   }
 
   async fn reaction_remove(&self, ctx: Context, reaction: Reaction) {

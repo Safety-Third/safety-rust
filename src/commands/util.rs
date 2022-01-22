@@ -10,6 +10,7 @@ use serenity::model::prelude::*;
 use serenity::{
   client::Context,
   framework::standard::{CommandError, CommandResult},
+  model::interactions::application_command::ApplicationCommandInteraction,
   utils::parse_mention,
 };
 
@@ -54,23 +55,21 @@ lazy_static!{
     ).unwrap();
 }
 
-pub fn get_user(interaction: &Interaction) -> Result<&User, &'static str> {
+#[inline]
+pub fn get_user(interaction: &ApplicationCommandInteraction) -> &User {
   if let Some(member) = &interaction.member {
-    Ok(&member.user)
-  } else if let Some(user) = &interaction.user {
-    Ok(user)
+    &member.user
   } else {
-    Err("No user or member!")
+    &interaction.user
   }
 }
 
-pub fn get_mention(interaction: &Interaction) -> Result<String, &'static str> {
+#[inline]
+pub fn get_mention(interaction: &ApplicationCommandInteraction) -> String {
   if let Some(member) = &interaction.member {
-    Ok(member.mention().to_string())
-  } else if let Some(user) = &interaction.user {
-    Ok(user.mention().to_string())
+    member.mention().to_string()
   } else {
-    Err("No user or member!")
+    interaction.user.mention().to_string()
   }
 }
 

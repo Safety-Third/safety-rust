@@ -44,12 +44,6 @@ fn vote_str(count: usize) -> &'static str {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct PollCache {
-  pub author: u64,
-  pub id: String
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Poll {
   pub author: u64,
   pub channel: u64,
@@ -335,24 +329,29 @@ impl Scheduler {
     Ok(jobs_as_t)
   }
 
-  pub fn remove_job(&mut self, job_id: &str, message_id: u64) -> RedisResult<()> {
+  pub fn remove_job(&mut self, message_id: u64) -> RedisResult<()> {
     let jobs_key = &self.jobs_key;
     let sched_key = &self.schedule_key;
 
-    let _: () = transaction(&mut self.connection, &[jobs_key, sched_key], |con, pipe| {
-      let job_score: Option<i64> = con.zscore(sched_key, job_id)?;
+    let job_id: Option<String> = self.connection.get(message_id)?;
 
-      match job_score {
-        None => Ok(Some(())),
-        Some(_) => {
-          pipe
-            .del(message_id)
-            .hdel(jobs_key, job_id)
-            .zrem(sched_key, job_id)
-            .query(con)
-        },
-      }
-    })?;
+    if let Some(job) = job_id {
+      let _: () = transaction(&mut self.connection, &[jobs_key, sched_key], move |con, pipe| {
+
+        let job_score: Option<i64> = con.zscore(sched_key, &job)?;
+  
+        match job_score {
+          None => pipe.query(con),
+          Some(_) => {
+            pipe
+              .del(message_id)
+              .hdel(jobs_key, &job)
+              .zrem(sched_key, &job)
+              .query(con)
+          }
+        }
+      })?;
+    }
 
     Ok(())
   }
@@ -369,23 +368,17 @@ impl Scheduler {
     let rng_generator = &self.rng;
 
     let mut new_id = rng_generator();
-
-    let cache = PollCache { author: author_id, id: new_id.clone() };
-    let cache = match bincode::serialize(&cache) {
-      Ok(serialized) => serialized,
-      Err(error) => return redis_error!(error)
-    };
     
     let jobs_key = &self.jobs_key;
     let schedule_key = &self.schedule_key;
 
-    let _: () = transaction(&mut self.connection, &[jobs_key, schedule_key], |con, pipe| {
+    let _: () = transaction(&mut self.connection, &[jobs_key, schedule_key, &message_id.to_string()], |con, pipe| {
       loop {
         if !con.hexists(jobs_key, new_id.to_string())? {
           break pipe
             .zadd(schedule_key, &new_id, timestamp)
             .hset(jobs_key, &new_id, &task[..])
-            .set_ex(message_id, cache.clone(), duration as usize)
+            .set_ex(message_id, &new_id, duration as usize)
             .query(con);
         }
 

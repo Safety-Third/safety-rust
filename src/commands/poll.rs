@@ -5,6 +5,7 @@ use regex::{Match,Regex};
 use serde_json::{Value, json};
 use serenity::{
   framework::standard::{Args, CommandResult, macros::command},
+  model::prelude::interactions::{application_command::*, message_component::ButtonStyle},
   model::prelude::*, prelude::*, utils::Colour,
 };
 
@@ -48,21 +49,20 @@ pub fn poll_command() -> Value {
   })
 }
 
-pub async fn interaction_poll(ctx: &Context, interaction: &Interaction,
-  data: &ApplicationCommandInteractionData) -> Result<(), String> {
+pub async fn interaction_poll(ctx: &Context,
+  interaction: &ApplicationCommandInteraction) -> Result<(), String> {
+
+  let data = &interaction.data;
 
   if data.options.len() < 4 {
     return Err(String::from("You must have a topic, date, and at least two options"))
   }
 
-  let user = get_user(&interaction)?;
+  let user = get_user(&interaction);
   let mention = user.mention().to_string();
   let author_id = user.id.0;
 
-  let channel = match interaction.channel_id {
-    Some(c) => c,
-    None => return Err(String::from("Must have channel id"))
-  };
+  let channel = interaction.channel_id;
 
   let duration = {
     let date_str = get_str_or_error(&data.options[1].value, "You must provide a time")?;
@@ -117,10 +117,15 @@ pub async fn interaction_poll(ctx: &Context, interaction: &Interaction,
           .field("duration", format_duration(&duration), true)
           .field("ends at", time_str, false)
           .description(description)
-          .footer(|f| {
-            f.text("Creator can react with x to cancel this poll")
-          })
       })
+      .components(|comp| comp.create_action_row(|row| 
+        row.create_button(|button|
+          button
+            .style(ButtonStyle::Danger)
+            .label("Delete this poll (creator only)")
+            .custom_id("delete")
+        )
+      ))
     )
 
   }).await {
@@ -135,8 +140,6 @@ pub async fn interaction_poll(ctx: &Context, interaction: &Interaction,
   for react in reactions {
     let _ = message.react(&ctx.http, react).await;
   }
-
-  let _ = message.react(&ctx.http, ReactionType::Unicode(String::from("❌"))).await;
 
   let poll = Poll {
     author: author_id, 
