@@ -326,7 +326,7 @@ impl EventHandler for Handler {
       let ctx_clone = Arc::new(ctx);
 
       spawn(async move {
-        let mut interval = interval(Duration::from_secs(60 * 5));
+        let mut interval = interval(Duration::from_secs(60 * 30));
 
         loop {
           interval.tick().await;
