@@ -150,7 +150,7 @@ pub async fn interaction_poll(ctx: &Context,
 
   {
     let mut redis_scheduler = lock.lock().await;
-    match redis_scheduler.schedule_job(&poll, time.timestamp(), duration.num_seconds()) {
+    match redis_scheduler.schedule_job(&poll, time.timestamp(), duration.num_seconds()).await {
       Ok(_) => Ok(()),
       Err(error) => Err(error.to_string())
     }
@@ -263,7 +263,7 @@ pub async fn poll(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult
 
   {
     let mut redis_scheduler = lock.lock().await;
-    redis_scheduler.schedule_job(&poll, time.timestamp(), duration.num_seconds())?
+    redis_scheduler.schedule_job(&poll, time.timestamp(), duration.num_seconds()).await?
   };
   
   Ok(())

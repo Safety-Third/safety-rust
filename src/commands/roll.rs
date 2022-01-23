@@ -198,7 +198,7 @@ fn handle_roll(roll_str: &str) -> Result<(i32, String), String> {
   let mut rng = thread_rng();
 
   for _ in 0..count {
-    let result = rng.gen_range(1, size + 1) as i32;
+    let result = rng.gen_range(1..=size) as i32;
     rolls.push(result);
   }
 
@@ -259,7 +259,7 @@ fn error_hash(die: &str, error: &str) -> Result<(i32, String), String> {
 
   let hashed_val = (s.finish() % 1000) as u32;
 
-  let rng = thread_rng().gen_range(1, hashed_val + 1);
+  let rng = thread_rng().gen_range(1..=hashed_val);
 
   Err(
     format!("**{}**.\nBut here's a guess for {} = 1d{}: **{}**", error, die, hashed_val, rng))

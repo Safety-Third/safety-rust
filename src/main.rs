@@ -8,8 +8,7 @@ use std::{
 
 use chrono::{Datelike, Utc};
 use chrono_tz::EST5EDT;
-use rand::{distributions::Alphanumeric, Rng, thread_rng};
-use redis::{Client, Commands, RedisResult};
+use redis::{AsyncCommands, Client, RedisResult};
 use serde_json::json;
 use serenity::{
   async_trait,
@@ -43,6 +42,7 @@ use commands::{
 };
 
 use util::{
+  rng::random_number,
   scheduler::{
     Callable, RedisSchedulerKey,
     RedisConnectionKey, RedisWrapper, Scheduler as RedisScheduler
@@ -156,7 +156,7 @@ impl EventHandler for Handler {
 
     let mut data: HashMap<String, u64> = {
       let mut redis_client = lock.lock().await;
-      match redis_client.0.hgetall(&key) {
+      match redis_client.0.hgetall(&key).await {
         Ok(result) => result,
         Err(_) => HashMap::new()
       }
@@ -186,7 +186,7 @@ impl EventHandler for Handler {
 
     {
       let mut redis_client = lock.lock().await;
-      let res: RedisResult<String> = redis_client.0.hset_multiple(key, &items);
+      let res: RedisResult<String> = redis_client.0.hset_multiple(key, &items).await;
       if let Err(error) = res {
         println!("{:?}", error);
       }
@@ -225,7 +225,7 @@ impl EventHandler for Handler {
     let data: HashMap<String, u64> = {
       let mut redis_client = lock.lock().await;
 
-      match redis_client.0.hgetall(&key) {
+      match redis_client.0.hgetall(&key).await {
         Ok(result) => result,
         Err(_) => HashMap::new()
       }
@@ -244,7 +244,7 @@ impl EventHandler for Handler {
 
     {
       let mut redis_client = lock.lock().await;
-      let res: RedisResult<u64> = redis_client.0.hset(&key, emoji_str, new_data);
+      let res: RedisResult<u64> = redis_client.0.hset(&key, emoji_str, new_data).await;
 
       if let Err(error) = res {
         println!("{:?}", error);
@@ -283,7 +283,7 @@ impl EventHandler for Handler {
 
     let data: HashMap<String, u64> = {
       let mut redis_client = lock.lock().await;
-      match redis_client.0.hgetall(&key) {
+      match redis_client.0.hgetall(&key).await {
         Ok(result) => result,
         Err(_) => HashMap::new()
       }
@@ -305,9 +305,9 @@ impl EventHandler for Handler {
 
       let res: RedisResult<u64> = {
         if new_data != 0 {
-          redis_client.0.hset(&key, emoji_str, new_data)
+          redis_client.0.hset(&key, emoji_str, new_data).await
         } else {
-          redis_client.0.hdel(&key, emoji_str)
+          redis_client.0.hdel(&key, emoji_str).await
         }
       };
 
@@ -326,11 +326,11 @@ impl EventHandler for Handler {
       let ctx_clone = Arc::new(ctx);
 
       spawn(async move {
-        let mut interval = interval(Duration::from_secs(60 * 30));
+        let mut interval = interval(Duration::from_secs(60 * 60));
 
         loop {
           interval.tick().await;
-          let idx: usize = thread_rng().gen_range(0, statuses.len());
+          let idx = random_number(statuses.len());
           ctx_clone.set_activity(Activity::playing(statuses[idx])).await;
         };
       });
@@ -470,24 +470,16 @@ async fn main() {
   {
     let http_arc = Arc::new(http);
 
-    let generator = || -> String {
-      thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(6)
-        .collect()
-    };
-
     let redis_client = Client::open(redis_url)
       .expect("Should be able to create a redis client");
 
-    let connection = redis_client.get_connection()
+    let connection = redis_client.get_async_connection().await
       .expect("Should be able to create a redis connection");
 
-    let persistent_connection = redis_client.get_connection()
+    let persistent_connection = redis_client.get_async_connection().await
       .expect("Should be able to create a second redis connection");
 
-    let redis_scheduler =
-      RedisScheduler::new(connection, Some(Box::new(generator)), None, None);
+    let redis_scheduler = RedisScheduler::new(connection, None, None);
 
     let redis_scheduler_arc = Arc::new(Mutex::new(redis_scheduler));
 
@@ -500,7 +492,7 @@ async fn main() {
         let jobs = {
           let now = Utc::now().timestamp();
           let mut task_scheduler = lock.lock().await;
-          task_scheduler.get_and_clear_ready_jobs(now)
+          task_scheduler.get_and_clear_ready_jobs(now).await
         };
 
         let arc_clone = http_arc.clone();

@@ -1,4 +1,5 @@
-use redis::{Commands, pipe, RedisError, transaction};
+#![macro_use]
+use redis::{AsyncCommands, RedisError, cmd, pipe};
 use serenity::prelude::*;
 use serenity::model::prelude::*;
 use serenity::framework::standard::{
@@ -9,14 +10,29 @@ use std::{
   collections::{BTreeMap, HashMap}, io::{Error, ErrorKind::Other}
 };
 
-use crate::util::scheduler::RedisConnectionKey;
+use crate::util::scheduler::{RedisConnectionKey};
 use super::{
   util::{EMOJI_REGEX, get_guild, handle_command_err}
 };
 
+// IDK how to have macros shared
 macro_rules! redis_error {
   ($message:expr) => {
-      Err(RedisError::from(Error::new(Other, $message)))
+      Err(Box::new(RedisError::from(Error::new(Other, $message))))
+  };
+}
+
+// adapted from https://github.com/mitsuhiko/redis-rs/issues/353
+macro_rules! async_transaction {
+  ($conn:expr, $keys:expr, $body:expr) => {
+      loop {
+          cmd("WATCH").arg($keys).query_async($conn).await?;
+
+          if let Some(response) = $body {
+              cmd("UNWATCH").query_async($conn).await?;
+              break response;
+          }
+      }
   };
 }
 
@@ -71,10 +87,11 @@ pub async fn categories(ctx: &Context, msg: &Message, mut args: Args) -> Command
     let (cats, emojis): (HashMap<String, String>, HashMap<String, u64>) = {
       let mut conn = lock.lock().await;
       
-      let result = pipe()
+      let result = pipe().atomic()
         .hgetall(&format!("{}:categories", guild_id))
         .hgetall(key)
-        .query(&mut conn.0);
+        .query_async(&mut conn.0)
+        .await;
 
       match result {
         Ok(res) => res,
@@ -189,9 +206,9 @@ pub async fn consent(ctx: &Context, msg: &Message, mut args: Args) -> CommandRes
       .clone()
   };
 
-  if let Err(error) = { 
+  if let Err(error) = {
     let mut redis_clinet = lock.lock().await;
-    redis_clinet.0.hset::<&str, &str, u64, u64>(&key, "consent", 1)
+    redis_clinet.0.hset::<&str, &str, u64, u64>(&key, "consent", 1).await
   } {
     return handle_command_err(ctx, msg, &error.to_string()).await;
   };
@@ -232,7 +249,7 @@ pub async fn delete(ctx: &Context, msg: &Message, mut args: Args) -> CommandResu
 
   if let Err(error) = { 
     let mut redis_clinet = lock.lock().await;
-    redis_clinet.0.del::<&str, u64>(&key)
+    redis_clinet.0.del::<&str, u64>(&key).await
   } {
     return handle_command_err(ctx, msg, &error.to_string()).await
   }
@@ -279,7 +296,7 @@ pub async fn delete_category(ctx: &Context, msg: &Message, mut args: Args) -> Co
   {
     let mut conn = lock.lock().await;
     if let Err(error) = conn.0.hdel::<&str, &str, u64>(
-      &format!("{}:categories", guild_id.0), &category) {
+      &format!("{}:categories", guild_id.0), &category).await {
       return command_err!(error.to_string());
     }
     
@@ -317,9 +334,9 @@ pub async fn revoke(ctx: &Context, msg: &Message, mut args: Args) -> CommandResu
       .clone()
   };
 
-  if let Err(error) =     { 
+  if let Err(error) = { 
     let mut redis_clinet = lock.lock().await;
-    redis_clinet.0.hset::<&str, &str, u64, u64>(&key, "consent", 0)
+    redis_clinet.0.hset::<&str, &str, u64, u64>(&key, "consent", 0).await
   } {
     return handle_command_err(ctx, msg, &error.to_string()).await;
   };
@@ -384,26 +401,30 @@ pub async fn set_category(ctx: &Context, msg: &Message, mut args: Args) -> Comma
     };
   };
 
-  let _: () = transaction(&mut lock.lock().await.0, &[&key], |conn, pipe| {
-    let categories: HashMap<String, String> = conn.hgetall(&key)?;
+  {
+    let con = &mut lock.lock().await.0;
+    let _: () = async_transaction!(con, &[&key], {
+      let categories: HashMap<String, String> = con.hgetall(&key).await?;
 
-    for (existing_category, emoji_list) in categories.iter() {
-      if category == *existing_category {
-        continue;
-      }
+      for (existing_category, emoji_list) in categories.iter() {
+        if category == *existing_category {
+          continue;
+        }
 
-      for emoji in emojis.iter() {
-        if emoji_list.contains(emoji) {
-          return redis_error!(
-            format!("Emoji {} is already used in category {}", emoji, existing_category));
+        for emoji in emojis.iter() {
+          if emoji_list.contains(emoji) {
+            return redis_error!(
+              format!("Emoji {} is already used in category {}", emoji, existing_category));
+          }
         }
       }
-    }
 
-    pipe
-      .hset(&key, &category, emojis.join(" ")).ignore()
-      .query(conn)
-  })?;
+      pipe().atomic()
+        .hset(&key, &category, emojis.join(" ")).ignore()
+        .query_async(con)
+        .await?
+    });
+  };
 
   let _ = msg.channel_id.say(&ctx.http, 
     format!("{} set category {} to {}", msg.author.mention(), &category, &emojis.join(" "))).await;
@@ -451,7 +472,7 @@ pub async fn stats(ctx: &Context, msg: &Message, mut args: Args) -> CommandResul
   let message = {
     let react_stats: HashMap<String, u64> = {
       let mut conn = lock.lock().await;
-      match conn.0.hgetall(key) {
+      match conn.0.hgetall(key).await {
         Ok(res) => res,
         Err(error) => return handle_command_err(ctx, msg, &error.to_string()).await
       }
@@ -538,7 +559,7 @@ pub async fn uses(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
   let message = {
     let react_stats: HashMap<String, u64> = {
       let mut conn = lock.lock().await;
-      match conn.0.hgetall(key) {
+      match conn.0.hgetall(key).await {
         Ok(res) => res,
         Err(error) => return handle_command_err(ctx, msg, &error.to_string()).await
       }
@@ -607,7 +628,7 @@ pub async fn view_categories(ctx: &Context, msg: &Message, mut args: Args) -> Co
 
   let categories: HashMap<String, String> = {
     let mut client = lock.lock().await;
-    match client.0.hgetall(format!("{}:categories", id)) {
+    match client.0.hgetall(format!("{}:categories", id)).await {
       Ok(result) => result,
       Err(error) => return command_err!(error.to_string())
     }
