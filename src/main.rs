@@ -117,7 +117,7 @@ impl EventHandler for Handler {
 
             {
               let mut redis_scheduler = lock.lock().await;
-              let _ = redis_scheduler.remove_job(msg.id.0);
+              let _ = redis_scheduler.remove_job(&msg.embeds[0].fields[1].value).await;
             };
           }
         } else {
@@ -364,7 +364,6 @@ async fn my_help(
     let len_to_remove = std::cmp::min(6, message.len());
 
     let remaining_args = Args::new(&message[len_to_remove..], &[Delimiter::Single(' ')]);
-    println!("{:?}", remaining_args);
     help_commands::with_embeds(context, msg, remaining_args, help_options, groups, owners).await;
   } else {
     help_commands::plain(context, msg, args, help_options, groups, owners).await;

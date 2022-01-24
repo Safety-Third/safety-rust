@@ -97,6 +97,14 @@ pub async fn interaction_poll(ctx: &Context,
     .map(|emoji| ReactionType::Unicode(emoji.to_string()))
     .collect();
 
+  let poll_id = {
+    let mut redis_scheduler = lock.lock().await;
+    match redis_scheduler.reserve_id().await {
+      Ok(id) => id,
+      Err(error) => return Err(error.to_string())
+    }
+  };
+
   if let Err(error) = interaction.create_interaction_response(&ctx.http, |resp| {
     resp.kind(InteractionResponseType::ChannelMessageWithSource)
     .interaction_response_data(|msg| msg
@@ -113,8 +121,8 @@ pub async fn interaction_poll(ctx: &Context,
         e
           .colour(Colour::BLITZ_BLUE)
           .title(format!("Poll: {}", &topic_str))
-          .field("author", &mention, true)
           .field("duration", format_duration(&duration), true)
+          .field("poll id", &poll_id, true)
           .field("ends at", time_str, false)
           .description(description)
       })
@@ -150,7 +158,7 @@ pub async fn interaction_poll(ctx: &Context,
 
   {
     let mut redis_scheduler = lock.lock().await;
-    match redis_scheduler.schedule_job(&poll, time.timestamp(), duration.num_seconds()).await {
+    match redis_scheduler.schedule_job(&poll, &poll_id, time.timestamp(), duration.num_seconds()).await {
       Ok(_) => Ok(()),
       Err(error) => Err(error.to_string())
     }
@@ -231,6 +239,14 @@ pub async fn poll(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult
     .map(|emoji| ReactionType::Unicode(emoji.to_string()))
     .collect();
 
+  let poll_id = {
+    let mut redis_scheduler = lock.lock().await;
+    match redis_scheduler.reserve_id().await {
+      Ok(id) => id,
+      Err(error) => return error_with_usage(error.to_string())
+    }
+  };
+
   let message = msg.channel_id.send_message(&ctx.http, |m| {
     m
       .content(format!{"Poll: '{}' by {}", &topic, msg.author.mention()})
@@ -249,6 +265,7 @@ pub async fn poll(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult
           .field("author", msg.author.mention(), true)
           .field("duration", format_duration(&duration), true)
           .field("ends at", time_str, false)
+          .field("poll id", &poll_id, false)
           .description(description)
       })
       .reactions(reactions)
@@ -263,7 +280,7 @@ pub async fn poll(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult
 
   {
     let mut redis_scheduler = lock.lock().await;
-    redis_scheduler.schedule_job(&poll, time.timestamp(), duration.num_seconds()).await?
+    redis_scheduler.schedule_job(&poll, &poll_id, time.timestamp(), duration.num_seconds()).await?
   };
   
   Ok(())
