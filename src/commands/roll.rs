@@ -7,16 +7,13 @@ use regex::Regex;
 use serde_json::{Value, json};
 use serenity::{
   prelude::*, model::prelude::*,
-  model::prelude::interactions::application_command::*,
-  framework::standard::{
-    Args, CommandResult, macros::command
-  }
+  model::prelude::interactions::application_command::*
 };
 
-use super::util::{get_mention, handle_command_err};
+use super::util::get_mention;
 
 pub fn roll_command() -> Value {
-  let options: Vec<Value> = (1..=7).map(|idx| json!({
+  let options: Vec<Value> = (1..=20).map(|idx| json!({
     "type": ApplicationCommandOptionType::String,
     "name": format!("die-{}", idx),
     "description": "A die roll like 2d20+5 or 4d4dldh2+1 (4d4, drop low, 2 highest + 1)",
@@ -62,54 +59,6 @@ pub async fn interaction_roll(ctx: &Context,
     response.kind(InteractionResponseType::ChannelMessageWithSource)
     .interaction_response_data(|message| message.content(final_msg))
   }).await;
-
-  Ok(())
-}
-
-#[command]
-#[min_args(1)]
-#[usage("die_list")]
-#[example("1d20 2d4 3d125129")]
-#[example("3d8+5 2d6-8")]
-#[example("8d10dl2")]
-#[example("8d10dh3")]
-#[example("8d10dldh")]
-#[example("10d20+2dl2dh2")]
-/// Rolls one or more dice. Dice rolls should be in this general form:
-/// "int"d"int"
-/// >roll 1d20
-///
-/// You can also add modifiers to the roll:
-/// +/-"int"
-/// >roll 3d8+5
-///
-/// And you can drop the n highest/lowest rolls:
-/// dl"int"dh"int" (you can omit "int" to drop 1)
-/// >roll 8d10dl2: drop 2 lowest
-/// >roll 8d10dh: drop highest
-/// >roll 8d10dldh: drop lowest and highest
-///
-/// Put together, we have:
-/// "int"d"int"+/-"int"dl"int"dh"int"
-/// >roll 10d20+2dl2dh2: 10 d 20s, +2, drop 2 lowest and highest
-pub async fn roll(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
-  let mut total_string = String::from(">>> ");
-
-  let mut total_sum: i32 = 0;
-
-  for die_roll in args.raw_quoted() {
-    match handle_roll(&die_roll) {
-      Ok((count, message)) => {
-        total_sum += count;
-        total_string += &message;
-      },
-      Err(error) => return handle_command_err(ctx, msg, &error).await
-    };
-  }
-
-  let _ = msg.channel_id.say(&ctx.http,
-    format!("{}, you rolled a total of **{}**\n{}\n",
-      msg.author.mention(), total_sum, total_string)).await;
 
   Ok(())
 }

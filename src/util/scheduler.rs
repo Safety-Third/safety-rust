@@ -67,7 +67,7 @@ impl Callable<Arc<Http>> for Poll {
   async fn call(&self, http: &Arc<Http>) {
     let channel_id = ChannelId(self.channel);
 
-    let message = match channel_id.message(http, self.message).await {
+    let mut message = match channel_id.message(http, self.message).await {
       Ok(msg) => msg,
       Err(error) => {
         if let Ok(user) = UserId(self.author).to_user(http).await {
@@ -83,6 +83,7 @@ impl Callable<Arc<Http>> for Poll {
     if message.embeds.is_empty() {
       return;
     }
+    
 
     let mut options: Vec<&str> = vec![];
 
@@ -148,6 +149,7 @@ impl Callable<Arc<Http>> for Poll {
 
 
     let _ = channel_id.say(http, result_msg).await;
+    let _ = message.edit(http, |m| m.components(|c| c)).await;
   }
 }
 
@@ -185,9 +187,7 @@ const JOBS_KEY: &str = "jobs";
 const SCHEDULE_KEY: &str = "schedule";
 
 impl Scheduler {
-  pub fn new(connection: Connection,
-    jobs_key: Option<&str>, schedule_key: Option<&str>) -> Scheduler {
-
+  pub fn new(connection: Connection) -> Scheduler {
     Scheduler { connection }
   }
 

@@ -23,7 +23,6 @@ use serenity::{
     channel::{Message, Reaction},
     gateway::Activity, id::{ChannelId, GuildId, UserId},
     interactions::{
-      message_component::InteractionMessage,
       Interaction, InteractionResponseType
     }
   },
@@ -32,7 +31,6 @@ use serenity::{
 use tokio::{spawn, sync::{Mutex, RwLock}, time::{interval, sleep}};
 
 use commands::{
-  impersonate::*,
   nya::*,
   poll::*,
   roles::*,
@@ -50,10 +48,6 @@ use util::{
   sheets::{parse_date, query},
 };
 
-#[group]
-#[commands(impersonate, poll, roll)]
-#[description = "General commands"]
-struct General;
 
 #[group]
 #[commands(add_roles, remove_roles, set_roles)]
@@ -61,10 +55,7 @@ struct General;
 struct Roles;
 
 #[group]
-#[commands(
-  categories, consent, delete, delete_category,
-  revoke, set_category, stats, uses, view_categories
-)]
+#[commands(consent, delete, revoke, stats, uses)]
 #[description = "Manage and view emoji stats"]
 struct Stats;
 
@@ -81,6 +72,7 @@ impl EventHandler for Handler {
           "nya" => interaction_nya(&ctx, &app_command).await,
           "poll" => interaction_poll(&ctx, &app_command).await,
           "roll" => interaction_roll(&ctx, &app_command).await,
+          "stats" => interaction_stats_entrypoint(&ctx, &app_command).await,
           _ => Ok(())
         } {
           let _ = app_command.create_interaction_response(&ctx.http, |resp|
@@ -90,12 +82,9 @@ impl EventHandler for Handler {
         }
       },
       Interaction::MessageComponent(comp_inter) => {
-        let message = if let InteractionMessage::Regular(ref msg) = comp_inter.message {
-          if msg.mentions.len() == 1 && comp_inter.user == msg.mentions[0] {
-            Some(msg)
-          } else {
-            None
-          }
+        let msg = &comp_inter.message;
+        let message = if msg.mentions.len() == 1 && comp_inter.user == msg.mentions[0] {
+          Some(msg)
         } else {
           None
         };
@@ -448,7 +437,6 @@ async fn main() {
       .owners(owners)
       .prefixes(vec![">", "~"]))
     .help(&MY_HELP)
-    .group(&GENERAL_GROUP)
     .group(&ROLES_GROUP)
     .group(&STATS_GROUP)
     .after(after)
@@ -478,7 +466,7 @@ async fn main() {
     let persistent_connection = redis_client.get_async_connection().await
       .expect("Should be able to create a second redis connection");
 
-    let redis_scheduler = RedisScheduler::new(connection, None, None);
+    let redis_scheduler = RedisScheduler::new(connection);
 
     let redis_scheduler_arc = Arc::new(Mutex::new(redis_scheduler));
 
@@ -571,13 +559,14 @@ async fn main() {
     }
   }
 
-  client.cache_and_http.http.create_guild_application_commands(guild_id, &json!([
-    roll_command(),
+  client.cache_and_http.http.create_global_application_commands(&json!([
     poll_command(),
-    nya_command()
+    roll_command(),
+    nya_command(),
+    stats_commands()
   ]))
     .await
-    .expect("Should be able to create");
+    .expect("Should be able to create global application commands");
 
   if let Err(why) = client.start().await {
     println!("An error occurred while running the client: {:?}", why);

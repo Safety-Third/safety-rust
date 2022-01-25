@@ -1,73 +1,116 @@
 #![macro_use]
-use redis::{AsyncCommands, RedisError, cmd, pipe};
-use serenity::prelude::*;
-use serenity::model::prelude::*;
-use serenity::framework::standard::{
-  Args, CommandError, CommandResult, macros::command
-};
+use std::collections::{BTreeMap, HashMap};
 
-use std::{
-  collections::{BTreeMap, HashMap}, io::{Error, ErrorKind::Other}
+use redis::AsyncCommands;
+use serde_json::{Value, json};
+use serenity::{
+  framework::standard::{Args, CommandError, CommandResult, macros::command},
+  model::prelude::interactions::application_command::*, model::prelude::*,
+  prelude::*
 };
 
 use crate::util::scheduler::{RedisConnectionKey};
-use super::{
-  util::{EMOJI_REGEX, get_guild, handle_command_err}
-};
+use super::util::{get_guild, handle_command_err};
 
-// IDK how to have macros shared
-macro_rules! redis_error {
-  ($message:expr) => {
-      Err(Box::new(RedisError::from(Error::new(Other, $message))))
-  };
+pub fn stats_commands() -> Value {
+  let guild_id = json!({
+    "type": ApplicationCommandOptionType::String,
+    "name": "server",
+    "description": "The server to access (optional). Defaults to the current server otherwise",
+    "required": "false"
+  });
+
+  return json!({
+    "name": "stats",
+    "description": "View and manage reaction stats",
+    "options": [json!({
+      "name": "consent",
+      "type": ApplicationCommandOptionType::SubCommandGroup,
+      "description": "Manage consent for collecting reaction stats",
+      "options": [json!({
+        "name": "approve",
+        "type": ApplicationCommandOptionType::SubCommand,
+        "description": "Approve of collecting stats of reactions in a server",
+        "options": [guild_id]
+      }), json!({
+        "name": "delete",
+        "type": ApplicationCommandOptionType::SubCommand,
+        "description": "Revoke permission and immediately delete all collected reaction stats in a server",
+        "options": [guild_id]
+      }), json!({
+        "name": "revoke",
+        "type": ApplicationCommandOptionType::SubCommand,
+        "description": "Revoke collecting reaction stats in a given server",
+        "options": [guild_id]
+      })]
+    }), json!({
+      "name": "get",
+      "type": ApplicationCommandOptionType::SubCommand,
+      "description": "See how often you use one or more emojis in a server. These stats are direct messaged",
+      "options": [guild_id, json!({
+        "name": "number_of_emojis",
+        "type": ApplicationCommandOptionType::Integer,
+        "description": "The number of emojis to show (default top 10)",
+        "required": false
+      }), json!({
+        "name": "emoji",
+        "type": ApplicationCommandOptionType::String,
+        "description": "An emoji to query",
+        "required": false
+      })]
+    })]
+  })
 }
 
-// adapted from https://github.com/mitsuhiko/redis-rs/issues/353
-macro_rules! async_transaction {
-  ($conn:expr, $keys:expr, $body:expr) => {
-      loop {
-          cmd("WATCH").arg($keys).query_async($conn).await?;
+pub async fn interaction_stats_entrypoint(ctx: &Context,
+  interaction: &ApplicationCommandInteraction) -> Result<(), String> {
 
-          if let Some(response) = $body {
-              cmd("UNWATCH").query_async($conn).await?;
-              break response;
-          }
-      }
-  };
+  let data = &interaction.data;
+
+  if data.options.len() < 1 {
+    return Err(String::from("You must provide a subcommand group"))
+  }
+
+
+  match interaction.data.options[0].name.as_str() {
+    "consent" => intereaction_stats_consent(ctx, interaction).await,
+    "get" => intereaction_stats_usage(ctx, interaction).await,
+    _ => Err(String::from("Unexpected command"))
+  }
 }
 
-const DEFAULT_EMOJI_LIMIT: u64 = 5;
+enum StatsCommand {
+  Approve, Delete, Revoke
+}
 
-#[command]
-#[max_args(2)]
-#[usage("optional_emoji_limit optional_server_name_id")]
-#[example("20")]
-#[example("5 000000000000000000")]
-#[example("10 test server")]
-#[example("")]
-/// Get stats of your emoji usage in a guild, by category. These stats are DMed.
-///
-/// By default, will send you the top 5 emojis per section (up to 2x max_per_category, if tied).
-/// You can change the number of emojis by providing a number as your first argument.
-/// Regardless, you will get a total count of the emojis per section.
-///
-/// This can be called in a server to get stats for that server, 
-/// or you can provide a server ID/name via a DM. 
-/// You have to provide an emoji count in this case.
-pub async fn categories(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
-  let emoji_limit = if !args.is_empty() {
-    args.single_quoted::<u64>()?
-  } else {
-    DEFAULT_EMOJI_LIMIT
+async fn intereaction_stats_consent(ctx: &Context,
+  interaction: &ApplicationCommandInteraction) -> Result<(), String> {
+
+  let subdata = &interaction.data.options[0].options;
+
+  if subdata.len() < 1 {
+    return Err(String::from("You must provide a subcommand"))
+  }
+  
+  let subcommand = match subdata[0].name.as_str() {
+    "approve" => StatsCommand::Approve,
+    "delete" => StatsCommand::Delete,
+    "revoke" => StatsCommand::Revoke,
+    _ => return Err(String::from("Invalid subcommand"))
   };
 
-  let id_or_name = if args.len() == 2 {
-    Some(args.single_quoted::<String>()?)
+  let subsubdata = &subdata[0].options;
+
+  let id_or_name_key = if subsubdata.len() > 0 {
+    match subsubdata[0].value {
+      Some(ref name) => name.as_str(),
+      None => None
+    }
   } else {
     None
   };
 
-  let (guild_name, key) = get_name_and_key(ctx, msg, id_or_name).await?;
+  let (guild_name, redis_key) = get_name_and_key_from_interaction(ctx, interaction, id_or_name_key).await?;
 
   let lock = {
     let mut context = ctx.data.write().await;
@@ -76,109 +119,180 @@ pub async fn categories(ctx: &Context, msg: &Message, mut args: Args) -> Command
       .clone()
   };
 
-  let idx = match key.find(":") {
-    Some(i) => i,
-    None => return handle_command_err(ctx, msg, "Unexpected error").await
+  let result = {
+    let mut redis_client = lock.lock().await;
+
+    match subcommand {
+      StatsCommand::Approve => {
+        match redis_client.0.hset::<&str, &str, u64, u64>(&redis_key, "consent", 1).await {
+          Ok(_) => format!("You have consented to record stats of your reactions for **{}**", guild_name),
+          Err(error) => return Err(error.to_string())
+        }
+      },
+      StatsCommand::Delete => {
+        match redis_client.0.del::<&str, u64>(&redis_key).await {
+          Ok(_) => format!("You have revoked consent of recording your reaction usage and deleted all saved data for **{}**", guild_name),
+          Err(error) => return Err(error.to_string())
+        }
+      },
+      StatsCommand::Revoke => {
+        match redis_client.0.hset::<&str, &str, u64, u64>(&redis_key, "consent", 0).await {
+          Ok(_) => format!("You have revoked consent of recording your reaction usage for **{}**. If you wish to also delete your stats, you may use /stats consent delete", guild_name),
+          Err(error) => return Err(error.to_string())
+        }
+      },
+    }
   };
 
-  let message = {
-    let guild_id = &key[idx + 1..];
-    
-    let (cats, emojis): (HashMap<String, String>, HashMap<String, u64>) = {
-      let mut conn = lock.lock().await;
-      
-      let result = pipe().atomic()
-        .hgetall(&format!("{}:categories", guild_id))
-        .hgetall(key)
-        .query_async(&mut conn.0)
-        .await;
+  if let Err(why) = interaction.user.direct_message(&ctx.http, |msg| msg.content(result)).await {
+    eprintln!("Error sending DM: {:?}", why);
+    Err(String::from("There was an error DMing you"))
+  } else {
+    match interaction.create_interaction_response(&ctx.http, |resp| {
+      resp.kind(InteractionResponseType::ChannelMessageWithSource)
+        .interaction_response_data(|msg| msg.content("OK"))
+    }).await {
+      Err(error) => Err(error.to_string()),
+      Ok(_) => Ok(())
+    }
+  }
+}
 
-      match result {
-        Ok(res) => res,
-        Err(err) => return command_err!(err.to_string())
+async fn intereaction_stats_usage(ctx: &Context,
+  interaction: &ApplicationCommandInteraction) -> Result<(), String> {
+
+  let subdata = &interaction.data.options[0].options;
+
+  let mut emoji: Option<&str> = None;
+  let mut emoji_count: Option<i64> = None;
+  let mut id_or_name: Option<&str> = None;
+
+  for option in subdata {
+    if let Some(ref value) = option.value {
+      match option.name.as_str() {
+        "emoji" => emoji = value.as_str(),
+        "number_of_emojis" => emoji_count = value.as_i64(),
+        "server" => id_or_name = value.as_str(),
+        _ => {}
+      };
+    }
+  }
+
+  if let Some(ref count) = emoji_count {
+    if count < &1 {
+      return Err(String::from("The number of emojis should at least be one"))
+    }
+  }
+
+  let (guild_name, redis_key) = get_name_and_key_from_interaction(ctx, interaction, id_or_name).await?;
+
+  let lock = {
+    let mut context = ctx.data.write().await;
+    context.get_mut::<RedisConnectionKey>()
+      .expect("Expected redis connection")
+      .clone()
+  };
+
+  let react_stats: HashMap<String, u64> = {
+    let mut conn = lock.lock().await;
+    match conn.0.hgetall(redis_key).await {
+      Ok(res) => res,
+      Err(error) => return Err(error.to_string())
+    }
+  };
+
+  let emoji_limit = emoji_count.unwrap_or(5);
+
+  let result = if react_stats.len() <= 1 {
+    String::from("You have used no emojis")
+  } else {
+    if let Some(specific_emoji) = emoji {
+      let react_count = react_stats.get(specific_emoji).unwrap_or(&0);
+
+      if react_count == &1 {
+        format!("You have used {} 1 time in {}", specific_emoji, guild_name)
+      } else {
+        format!("You have used {} {} times in {}", specific_emoji, react_count, guild_name)
       }
-    };
-
-    
-    if emojis.is_empty() {
-      String::from("You have used no emojis")
     } else {
-      let mut message = String::from(">>> ");
-
-      let mut score_mapping_by_category: HashMap<&str, BTreeMap<u64, Vec<&str>>> = HashMap::new();
-    
-      for (emoji, count) in emojis.iter() {
+      let mut message = format!("Stats in {}\n>>> ", guild_name);
+      let mut score_mapping: BTreeMap<&u64, Vec<&str>> = BTreeMap::new();
+  
+      for (emoji, count) in react_stats.iter() {
         if emoji == "consent" {
-          continue;
+          continue
         }
-
-        let mut category = "**No category**";
-
-        for (key, emojilist) in cats.iter() {
-          if emojilist.contains(emoji) {
-            category = key;
-            break;
-          }
-        }
-
-        match score_mapping_by_category.get_mut(&category) {
-          Some(map) => {
-            match map.get_mut(count) {
-              Some(existing) => {
-                existing.push(emoji);
-              },
-              None => {
-                map.insert(*count, vec![emoji]);
-              }
-            }
-          },
+  
+        match score_mapping.get_mut(count) {
+          Some(list) => list.push(emoji),
           None => {
-            let mut map: BTreeMap<u64, Vec<&str>> = BTreeMap::new();
-            map.insert(*count, vec![emoji]);
-            score_mapping_by_category.insert(category, map);
+            score_mapping.insert(count, vec![emoji]);
           }
         };
       }
 
-      let mut section_and_top_emojis: Vec<(u64, Vec<String>, &str)> = vec![];
-
-      for (category, mapping) in score_mapping_by_category.iter_mut() {
-        let mut emoji_count = 0u64;
-        let mut total_count = 0u64;
-
-        let mut top_emojis: Vec<String> = vec![];
-
-        for (count, emoji_list) in mapping.iter_mut().rev() {
-          let len = emoji_list.len() as u64;
-
-          if emoji_count < emoji_limit && emoji_count + len< (2 * emoji_limit) {
-            top_emojis.push(
-              format!("{} ({})", emoji_list.join(" "), count));
-          }
-
-          emoji_count += len;
-          total_count += *count * len;
+      let mut emoji_count = 0;
+  
+      for (count, emojis) in score_mapping.iter().rev() {
+        let emoji_len = emojis.len() as i64;
+  
+        if emoji_len + emoji_count >= emoji_limit * 2 {
+          break;
         }
-
-        section_and_top_emojis.push((total_count, top_emojis, category));
-      }
-
-      section_and_top_emojis.sort_by(|a, b| b.0.cmp(&a.0));
-
-      for (total_count, emojis, category) in section_and_top_emojis.iter() {
-        message += &format!("{} ({} uses): {}\n", category, total_count, &emojis.join(" "));
+        
+        message += &format!("{}: {}\n", count, &emojis.join(" "));
+        emoji_count += emoji_len;
+  
+        if emoji_count >= emoji_limit {
+          break;
+        }
       }
 
       message
     }
   };
-  
-  let _ = msg.author.dm(&ctx.http, |m| {
-    m.content(&format!("{}\nin {}", message, guild_name))
-  }).await;
 
-  Ok(())
+  if let Err(why) = interaction.user.direct_message(&ctx.http, |msg| msg.content(result)).await {
+    eprintln!("Error sending DM: {:?}", why);
+    Err(String::from("There was an error DMing you"))
+  } else {
+    match interaction.create_interaction_response(&ctx.http, |resp| {
+      resp.kind(InteractionResponseType::ChannelMessageWithSource)
+        .interaction_response_data(|msg| msg.content("OK"))
+    }).await {
+      Err(error) => Err(error.to_string()),
+      Ok(_) => Ok(())
+    }
+  }
 }
+
+async fn get_name_and_key_from_interaction(ctx: &Context, interaction: &ApplicationCommandInteraction, 
+  id_or_name: Option<&str>) -> Result<(String, String), String> {
+  match id_or_name {
+    Some(identifier) => {
+      match get_guild_from_id(ctx, &identifier).await {
+        Some(guild) => {
+          Ok((guild.name.clone(), format!("{}:{}", interaction.user.id.0, guild.id.0)))
+        },
+        None => Err(format!("Could not find a server {}", identifier))
+      }
+    },
+    None => {
+      if let Some(id) = interaction.guild_id {
+        if let Some(name) = id.name(&ctx.cache).await {
+          Ok((name, format!("{}:{}", interaction.user.id.0, id)))
+        } else {
+          Err(String::from("Could not get guild name"))
+        }
+      } else {
+        Err(String::from("You must provide a guild id/name. Alternatively, you can message in a server )channel"))
+      }
+    }
+  }
+}
+
+
+const DEFAULT_EMOJI_LIMIT: u64 = 5;
 
 #[command]
 #[max_args(1)]
@@ -262,52 +376,6 @@ pub async fn delete(ctx: &Context, msg: &Message, mut args: Args) -> CommandResu
   Ok(())
 }
 
-#[command("deleteCategory")]
-#[aliases("delete_category", "del_cat", "delCat")]
-#[only_in("guild")]
-#[num_args(1)]
-#[required_permissions("MANAGE_EMOJIS")]
-#[usage("category")]
-#[example("joy")]
-/// Deletes a specific emoji
-/// This function is server-only (no DMing).
-pub async fn delete_category(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
-  let guild_id = match msg.channel_id.to_channel(&ctx.http).await {
-    Ok(channel) => {
-      match channel {
-        Channel::Guild(guild_channel) => {
-          guild_channel.guild_id
-        },
-        _ => return handle_command_err(ctx, msg, "This command can only be processed in a server").await
-      }
-    }, 
-    Err(_) => return handle_command_err(ctx, msg, "No channel found").await
-  };
-
-  let category = args.single_quoted::<String>()?;
-
-  let lock = {
-    let mut context = ctx.data.write().await;
-    context.get_mut::<RedisConnectionKey>()
-      .expect("Expected redis connection")
-      .clone()
-  };
-
-  {
-    let mut conn = lock.lock().await;
-    if let Err(error) = conn.0.hdel::<&str, &str, u64>(
-      &format!("{}:categories", guild_id.0), &category).await {
-      return command_err!(error.to_string());
-    }
-    
-  };
-
-  let _ = msg.channel_id.say(&ctx.http, format!(
-    "{:?} deleted category {}", msg.author.mention(), &category)).await;
-
-  Ok(())
-}
-
 #[command]
 #[max_args(1)]
 #[usage("optional_server_name_id")]
@@ -346,88 +414,6 @@ pub async fn revoke(ctx: &Context, msg: &Message, mut args: Args) -> CommandResu
     m.content(
       &format!("You have revoked consent to record stats of your reactions\nin {}", guild_name))
   }).await?;
-
-  Ok(())
-}
-
-#[command("setCategory")]
-#[aliases("set_category", "set_cat", "setCat")]
-#[min_args(2)]
-#[only_in("guild")]
-#[required_permissions("MANAGE_EMOJIS")]
-#[usage("space_separated_emoji_ist")]
-#[example("joy 3️⃣")]
-#[example("joy 3️⃣ 4️⃣ 5️⃣")]
-/// Sets a list of emojis to a specific category.
-/// This category will be used to determine which "categories" are most used by a specific person.
-/// An emoji can only belong to a single category.
-/// This function is server-only (no DMing).
-pub async fn set_category(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
-  let guild_id = match msg.channel_id.to_channel(&ctx.http).await {
-    Ok(channel) => {
-      match channel {
-        Channel::Guild(guild_channel) => {
-          guild_channel.guild_id
-        },
-        _ => return handle_command_err(ctx, msg, "This command can only be processed in a server").await
-      }
-    }, 
-    Err(_) => return handle_command_err(ctx, msg, "No channel found").await
-  };
-
-  let key = format!("{}:categories", guild_id.0);
-  
-  let lock = {
-    let mut context = ctx.data.write().await;
-    context.get_mut::<RedisConnectionKey>()
-      .expect("Expected redis connection")
-      .clone()
-  };
-
-  let category = args.single_quoted::<String>()?;
-
-  let mut emojis: Vec<String> = Vec::new();
-
-  for emoji in args.iter::<String>() {
-    match emoji {
-      Ok(em) => {
-        if EMOJI_REGEX.is_match(&em) {
-          emojis.push(em);
-        } else {
-          return command_err!(format!("\"{}\" is not a valid emoji", &em));
-        }
-      },
-      Err(error) => return command_err!(error.to_string())
-    };
-  };
-
-  {
-    let con = &mut lock.lock().await.0;
-    let _: () = async_transaction!(con, &[&key], {
-      let categories: HashMap<String, String> = con.hgetall(&key).await?;
-
-      for (existing_category, emoji_list) in categories.iter() {
-        if category == *existing_category {
-          continue;
-        }
-
-        for emoji in emojis.iter() {
-          if emoji_list.contains(emoji) {
-            return redis_error!(
-              format!("Emoji {} is already used in category {}", emoji, existing_category));
-          }
-        }
-      }
-
-      pipe().atomic()
-        .hset(&key, &category, emojis.join(" ")).ignore()
-        .query_async(con)
-        .await?
-    });
-  };
-
-  let _ = msg.channel_id.say(&ctx.http, 
-    format!("{} set category {} to {}", msg.author.mention(), &category, &emojis.join(" "))).await;
 
   Ok(())
 }
@@ -589,62 +575,6 @@ pub async fn uses(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
   let _ = msg.author.dm(&ctx.http, |m| {
     m.content(&format!("{}\nin {}", message, guild_name))
   }).await;
-
-  Ok(())
-}
-
-#[command("viewCategories")]
-#[aliases("view_categories", "view_cats", "viewCats")]
-#[max_args(1)]
-#[usage("optional_server_id_name")]
-#[example("\"test server\"")]
-#[example("000000000000000000")]
-/// View the emoji categories in a specific server.
-///
-/// You can provide a server id or name to specify a certain server to use, or
-/// send the message in a server (no arguments) to get the categories for that server.
-pub async fn view_categories(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
-  let (name, id) = if !args.is_empty() {
-    let guild_id_or_name = args.single_quoted::<String>()?;
-
-    match get_guild_from_id(ctx, &guild_id_or_name).await {
-      Some(guild) => {
-        (guild.name.clone(), guild.id.0)
-      },
-      None => return 
-        handle_command_err(ctx, msg, &format!("Could not find a server {}", guild_id_or_name)).await
-    }
-  } else {
-    let result =  get_guild(ctx, msg).await?;
-    (result.name, result.id.0)
-  };
-
-  let lock = {
-    let mut context = ctx.data.write().await;
-    context.get_mut::<RedisConnectionKey>()
-      .expect("Expected redis connection")
-      .clone()
-  };
-
-  let categories: HashMap<String, String> = {
-    let mut client = lock.lock().await;
-    match client.0.hgetall(format!("{}:categories", id)).await {
-      Ok(result) => result,
-      Err(error) => return command_err!(error.to_string())
-    }
-  };
-
-  if categories.is_empty() {
-    let _ = msg.channel_id.say(&ctx.http, &format!("No categories for {}", name)).await;
-  } else {
-    let mut message = format!(">>> Emoji categories in {}", name);
-
-    for (category, emojilist) in categories.iter() {
-      message += &format!("\n{}: {}", category, emojilist);
-    }
-
-    let _ = msg.channel_id.say(&ctx.http, &message).await;
-  }
 
   Ok(())
 }

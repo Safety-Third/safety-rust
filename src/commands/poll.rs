@@ -1,10 +1,9 @@
 use chrono::{Duration, Utc};
 use chrono_tz::{EST5EDT};
 use lazy_static::lazy_static;
-use regex::{Match,Regex};
+use regex::Regex;
 use serde_json::{Value, json};
 use serenity::{
-  framework::standard::{Args, CommandResult, macros::command},
   model::prelude::interactions::{application_command::*, message_component::ButtonStyle},
   model::prelude::*, prelude::*, utils::Colour,
 };
@@ -13,8 +12,6 @@ use crate::util::scheduler::{EMOJI_ORDER, Poll, RedisSchedulerKey};
 use super::{ 
   util::{format_duration, get_str_or_error, get_user}
 };
-
-const MAX_POLL_ARGS: usize = 20;
 
 pub fn poll_command() -> Value {
   let mut options: Vec<Value> = vec![
@@ -165,135 +162,43 @@ pub async fn interaction_poll(ctx: &Context,
   }
 }
 
-#[command]
-#[usage("time topic options_list")]
-#[example("2d3h1m2s What are birds? [:jeff:] [We don't know]")]
-#[example("2d3h1m2s What are birds?
-:jeff:
-We don't know
-")]
-/// Creates an emoji-based poll for a certain topic. Options Options can
-/// either be provided surrounded by [], such as `[this is an option]`, or on
-/// subsequent lines after the topic. **DO NOT** Mix both
-///
-/// When providing times, here is the general format: XdXhXmXs. Replace X with a number. Examples:
-/// - 1d (1 day)
-/// - 1d3h10m35s (1 day, 3 hours, 10 minutes, 35s)
-/// - 3h5m (3 hours, 5 minutes)
-/// - 5m (5 minutes)
-/// - 5 (5 minutes)
-pub async fn poll(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
-  lazy_static! {
-    static ref RE: Regex = Regex::new(r"\[[^\[\]]+\]").unwrap();
+pub fn add_poll_command() -> Value {
+  let mut options: Vec<Value> = vec![
+    json!({
+      "type": ApplicationCommandOptionType::String,
+      "name": "pill_id",
+      "description": "The id of the poll you wish to edit",
+      "required": true
+    }),
+  ];
+
+  for idx in 1..=18 {
+    options.push(json!({
+      "type": ApplicationCommandOptionType::String,
+      "name": format!("option-{}", idx),
+      "description": format!("poll option {}", idx),
+      "required": idx == 1
+    }))
   }
 
-  let first: String = args.single_quoted()?;
-  let remaining = match args.remains() {
-    Some(string) => string,
-    None => return error_with_usage(String::from("You must provide a poll topic and options"))
-  };
-
-  let mut options: Vec<&str>;
-
-  let topic: &str;
-
-  if remaining.contains("\n") {
-    let lines: Vec<&str> = remaining.split("\n")
-      .filter(|line| !line.trim().is_empty())
-      .map(|line| line.trim())
-      .collect();
-    topic = lines[0];
-    options = lines[1..].to_owned();
-    
-  } else {
-    options = vec![];
-
-    let matches: Vec<Match> = RE.find_iter(remaining).collect();
-    
-    if matches.len() == 0 {
-      return error_with_usage(String::from("You must provide at least one option"));
-    } else if matches.len() > MAX_POLL_ARGS {
-      return error_with_usage(format!("You can have at maximum {} options", MAX_POLL_ARGS));
-    }
-
-    topic = &remaining[..matches[0].start() - 1].trim();
-    
-    for option in matches {
-      options.push(&remaining[option.start() + 1 .. option.end() - 1].trim());
-    }
-  }
-
-  let duration = parse_time(&first)?;
-
-  let lock = {
-    let mut context = ctx.data.write().await;
-    context.get_mut::<RedisSchedulerKey>()
-      .expect("Expected redis scheduler")
-      .clone()
-  };
-
-  let time = (Utc::now() + duration).with_timezone(&EST5EDT);
-
-  let reactions: Vec<ReactionType> = EMOJI_ORDER[0..options.len()]
-    .iter()
-    .map(|emoji| ReactionType::Unicode(emoji.to_string()))
-    .collect();
-
-  let poll_id = {
-    let mut redis_scheduler = lock.lock().await;
-    match redis_scheduler.reserve_id().await {
-      Ok(id) => id,
-      Err(error) => return error_with_usage(error.to_string())
-    }
-  };
-
-  let message = msg.channel_id.send_message(&ctx.http, |m| {
-    m
-      .content(format!{"Poll: '{}' by {}", &topic, msg.author.mention()})
-      .embed(|e| {
-        let mut description = String::from(">>> ");
-
-        for (count, option) in options.iter().enumerate() {
-          description += &format!("{}. {}\n", count + 1, &option);
-        }
-
-        let time_str = time.format("%D %r %Z");
-
-        e
-          .colour(Colour::BLITZ_BLUE)
-          .title(format!("Poll: {}", &topic))
-          .field("author", msg.author.mention(), true)
-          .field("duration", format_duration(&duration), true)
-          .field("ends at", time_str, false)
-          .field("poll id", &poll_id, false)
-          .description(description)
-      })
-      .reactions(reactions)
-  }).await?;
-
-  let poll = Poll {
-    author: msg.author.id.0,
-    channel: msg.channel_id.0,
-    message: message.id.0,
-    topic: topic.to_owned()
-  };
-
-  {
-    let mut redis_scheduler = lock.lock().await;
-    redis_scheduler.schedule_job(&poll, &poll_id, time.timestamp(), duration.num_seconds()).await?
-  };
-  
-  Ok(())
+  return json!({
+    "name": "poll",
+    "description": "Creates an emoji-based poll for a certain topic.",
+    "options": options
+  })
 }
 
-fn error_with_usage(base_err: String) -> CommandResult {
-  return command_err!(format!("{}\nHere are two examples:
-`>poll 1m this is my topic [option 1, in brackets] [option 2, also in brackets]`
+pub async fn interaction_add_poll(ctx: &Context, 
+  interaction: &ApplicationCommandInteraction) -> Result<(), String> {
 
-`>poll 1m this is my topic
-option 1, on a separate line
-option 2, also on a separate line`
-", base_err));
+  let data = &interaction.data;
+
+  if data.options.len() < 4 {
+    return Err(String::from("You must have a topic, date, and at least two options"))
+  }
+  
+
+  Ok(())
 }
 
 /// Converts a potential "timing string" (day, hour, minute, second) to a Duration
