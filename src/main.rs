@@ -392,11 +392,6 @@ async fn main() {
     .parse::<u64>()
     .expect("Expected channel to be a number");
 
-  let guild_id = var("SAFETY_GUILD_ID")
-    .expect("expected a guild id for guild commands")
-    .parse::<u64>()
-    .expect("Expected the id to be a number");
-
   let birthday_sheet_id = var("SAFETY_GOOGLE_DOCS_LINK")
     .expect("Expected Safety Google Docs link");
 
@@ -426,12 +421,21 @@ async fn main() {
     }
   };
 
+  let privileges = GatewayIntents::default()
+    .union(GatewayIntents::DIRECT_MESSAGES)
+    .union(GatewayIntents::DIRECT_MESSAGE_REACTIONS)
+    .union(GatewayIntents::GUILDS)
+    .union(GatewayIntents::GUILD_EMOJIS)
+    .union(GatewayIntents::GUILD_MEMBERS)
+    .union(GatewayIntents::GUILD_MESSAGES)
+    .union(GatewayIntents::GUILD_MESSAGE_REACTIONS);
+
   let mut client = DiscordClient::builder(&token)
     .event_handler(Handler {
       loop_running: AtomicBool::new(false)
     })
     .application_id(app_id)
-    .intents(GatewayIntents::all())
+    .intents(privileges)
     .framework(StandardFramework::new()
     .configure(|c| c
       .owners(owners)
