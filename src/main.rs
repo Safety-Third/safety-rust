@@ -307,14 +307,15 @@ impl EventHandler for Handler {
   }
 
   async fn cache_ready(&self, ctx: Context, _guilds: Vec<GuildId>) {
-    let statuses = [
-      "What is Jeff?", "horse plinko", "7 blunders", "the missile knows", "fight me"
-    ];
-
     if !self.loop_running.load(Ordering::Relaxed) {
+      println!("Starting thread");
       let ctx_clone = Arc::new(ctx);
 
       spawn(async move {
+        let statuses = [
+          "What is Jeff?", "horse plinko", "7 blunders", "the missile knows", "fight me"
+        ];
+
         let mut interval = interval(Duration::from_secs(60 * 60));
 
         loop {
@@ -378,7 +379,7 @@ async fn dispatch_error(ctx: &Context, msg: &Message, error: DispatchError) {
   }
 }
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::main(flavor = "multi_thread", worker_threads = 12)]
 async fn main() {
   let api_key = var("GOOGLE_API_KEY")
     .expect("Expected Google API key");
@@ -426,7 +427,6 @@ async fn main() {
     .union(GatewayIntents::DIRECT_MESSAGE_REACTIONS)
     .union(GatewayIntents::GUILDS)
     .union(GatewayIntents::GUILD_EMOJIS)
-    .union(GatewayIntents::GUILD_MEMBERS)
     .union(GatewayIntents::GUILD_MESSAGES)
     .union(GatewayIntents::GUILD_MESSAGE_REACTIONS);
 
@@ -488,7 +488,6 @@ async fn main() {
 
         let arc_clone = http_arc.clone();
 
-
         spawn(async move {
           match jobs {
             Ok(tasks) => {
@@ -499,7 +498,6 @@ async fn main() {
             Err(error) => println!("{:?}", error)
           };
         });
-
 
         interval.tick().await;
       };
