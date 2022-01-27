@@ -82,38 +82,17 @@ impl EventHandler for Handler {
         }
       },
       Interaction::MessageComponent(comp_inter) => {
-        let msg = &comp_inter.message;
-        let message = if msg.mentions.len() == 1 && comp_inter.user == msg.mentions[0] {
-          Some(msg)
-        } else {
-          None
-        };
-
-        if let Some(msg) = message {
-          if let Err(error) = msg.delete(&ctx.http).await {
-            let _ = comp_inter.create_interaction_response(&ctx.http, |resp| {
-              resp.kind(InteractionResponseType::ChannelMessageWithSource)
-                .interaction_response_data(|msg| msg
-                  .content(format!("Could not delete poll: {}", error)))
-            });
-          } else {
-            let lock = {
-              let mut context = ctx.data.write().await;
-              context.get_mut::<RedisSchedulerKey>()
-                .expect("Expected redis instance")
-                .clone()
-            };
-
-            {
-              let mut redis_scheduler = lock.lock().await;
-              let _ = redis_scheduler.remove_job(&msg.embeds[0].fields[1].value).await;
-            };
-          }
-        } else {
+        if let Err(error) = match comp_inter.data.custom_id.as_str() {
+          "close" | "delete" => handle_poll_interaction(&ctx, &comp_inter).await,
+          _ => Ok(())
+        } {
+          println!("An error occurred: {:?}", error);
           let _ = comp_inter.create_interaction_response(&ctx.http, |resp| {
-            resp.kind(InteractionResponseType::DeferredUpdateMessage)
+            resp.kind(InteractionResponseType::ChannelMessageWithSource)
+              .interaction_response_data(|msg| msg
+                .content(format!("Could not process {} request: {}", comp_inter.data.custom_id, error)))
           }).await;
-        };
+        }
       },
       _ => {}
     }

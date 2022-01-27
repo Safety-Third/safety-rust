@@ -4,12 +4,15 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use serde_json::{Value, json};
 use serenity::{
-  model::prelude::interactions::{application_command::*, message_component::ButtonStyle},
+  model::prelude::interactions::{
+    application_command::*,
+    message_component::{ButtonStyle, MessageComponentInteraction}
+  },
   model::prelude::*, prelude::*, utils::Colour,
 };
 
-use crate::util::scheduler::{EMOJI_ORDER, Poll, RedisSchedulerKey};
-use super::{ 
+use crate::util::scheduler::{EMOJI_ORDER, Callable, Poll, RedisSchedulerKey};
+use super::{
   util::{format_duration, get_str_or_error, get_user}
 };
 
@@ -27,7 +30,7 @@ pub fn poll_command() -> Value {
       "description": "In the form XdXhXmXs (3d2h1m1s 3 day, 2 hour, 1 minute, 1 sec; 2m30s 2 minute, 30 second)",
       "required": true
     }),
-    
+
   ];
 
   for idx in 1..=20 {
@@ -123,13 +126,16 @@ pub async fn interaction_poll(ctx: &Context,
           .field("ends at", time_str, false)
           .description(description)
       })
-      .components(|comp| comp.create_action_row(|row| 
-        row.create_button(|button|
-          button
+      .components(|comp| comp.create_action_row(|row|
+        row.create_button(|button| button
             .style(ButtonStyle::Danger)
-            .label("Delete this poll (creator only)")
+            .label("Delete this poll")
             .custom_id("delete")
         )
+          .create_button(|button| button
+            .style(ButtonStyle::Secondary)
+            .label("Close this poll")
+            .custom_id("close"))
       ))
     )
 
@@ -147,7 +153,7 @@ pub async fn interaction_poll(ctx: &Context,
   }
 
   let poll = Poll {
-    author: author_id, 
+    author: author_id,
     channel: channel.0,
     message: message.id.0,
     topic: topic_str
@@ -188,7 +194,7 @@ pub fn add_poll_command() -> Value {
   })
 }
 
-pub async fn interaction_add_poll(ctx: &Context, 
+pub async fn interaction_add_poll(ctx: &Context,
   interaction: &ApplicationCommandInteraction) -> Result<(), String> {
 
   let data = &interaction.data;
@@ -196,16 +202,85 @@ pub async fn interaction_add_poll(ctx: &Context,
   if data.options.len() < 4 {
     return Err(String::from("You must have a topic, date, and at least two options"))
   }
-  
+
 
   Ok(())
 }
 
+pub async fn handle_poll_interaction(ctx: &Context,
+  interaction: &MessageComponentInteraction) -> Result<(), String> {
+
+  let msg = &interaction.message;
+
+  // are you the author?
+  if msg.mentions.len() == 1 && interaction.user == msg.mentions[0] {
+    match interaction.data.custom_id.as_str() {
+      "close" => {
+        let poll = {
+          let lock = {
+            let mut context = ctx.data.write().await;
+            context.get_mut::<RedisSchedulerKey>()
+              .expect("Expected redis instance")
+              .clone()
+          };
+
+          let mut redis_scheduler = lock.lock().await;
+          redis_scheduler.pop_job(&msg.embeds[0].fields[1].value).await
+        };
+
+        match poll {
+          Ok(result) => {
+            let _ = interaction.create_interaction_response(&ctx.http, |resp| {
+              resp.kind(InteractionResponseType::UpdateMessage)
+                .interaction_response_data(|resp| resp.components(|comp| comp))
+            }).await;
+
+            if let Some(real_poll) = result {
+              real_poll.call(&ctx.http).await;
+            }
+
+            Ok(())
+          },
+          Err(error) => Err(format!("An error occurred when trying to close the poll: {}", error))
+        }
+      },
+      "delete" => {
+        if let Err(error) = msg.delete(&ctx.http).await {
+          Err(format!("Could not delete poll: {}", error))
+        } else {
+          let lock = {
+            let mut context = ctx.data.write().await;
+            context.get_mut::<RedisSchedulerKey>()
+              .expect("Expected redis instance")
+              .clone()
+          };
+
+          {
+            let mut redis_scheduler = lock.lock().await;
+            let _ = redis_scheduler.remove_job(&msg.embeds[0].fields[1].value).await;
+          };
+
+          Ok(())
+        }
+      },
+      _ => Ok(())
+    }
+  } else {
+    let _ = interaction.create_interaction_response(&ctx.http, |resp| {
+      resp.kind(InteractionResponseType::DeferredUpdateMessage)
+    }).await;
+
+    Ok(())
+  }
+}
+
+
+
 /// Converts a potential "timing string" (day, hour, minute, second) to a Duration
-/// 
+///
 /// # Arguments
 /// * `timing` - A potential timing string. A successful format would be
-/// in the form (\d+d)?(\d+h)?(\d+m)?(\d+s?), or a single number (minutes). 
+/// in the form (\d+d)?(\d+h)?(\d+m)?(\d+s?), or a single number (minutes).
 /// This time string **must** be at least 30 seconds
 /// # Returns
 /// - `Err`: if the string is malformed, or less than 30 seconds
@@ -270,6 +345,6 @@ fn parse_time(timing: &str) -> Result<Duration, &str> {
   if duration < *MIN_DURATION {
     return Err("Poll must be at least 30 seconds");
   }
-  
+
   Ok(duration)
 }
