@@ -55,7 +55,7 @@ pub async fn interaction_roll(ctx: &Context,
   let final_msg = format!("{}, you rolled a total of **{}**\n{}\n",
     mention, total_sum, total_string);
 
-  let _ = interaction.create_interaction_response(&ctx.http, |response| {
+  let _ = interaction.create_interaction_response(ctx, |response| {
     response.kind(InteractionResponseType::ChannelMessageWithSource)
     .interaction_response_data(|message| message.content(final_msg))
   }).await;

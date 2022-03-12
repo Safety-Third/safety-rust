@@ -159,7 +159,7 @@ pub struct Scheduler {
 
 #[derive(Debug)]
 pub struct MyVec {
-  v: Vec<Vec<u8>>,
+  pub v: Vec<Vec<u8>>,
 }
 
 impl FromRedisValue for MyVec {

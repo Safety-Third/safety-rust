@@ -9,20 +9,10 @@ use serenity::model::prelude::*;
 
 use serenity::{
   client::Context,
-  framework::standard::{CommandError, CommandResult},
+  framework::standard::CommandError,
   model::interactions::application_command::ApplicationCommandInteraction,
   utils::parse_mention,
 };
-
-#[inline]
-pub async fn handle_command_err(ctx: &Context, msg: &Message, error: &str) -> CommandResult {
-  if !msg.author.bot {
-    let _ = msg.channel_id.say(&ctx.http, 
-      &format!("Error in {:?}:\n{}", msg.content, error)).await;
-  }
-
-  Ok(())
-}
 
 #[macro_export]
 macro_rules! error {
@@ -109,26 +99,6 @@ pub fn format_duration(duration: &Duration) -> String {
   }
 
   string
-}
-
-pub async fn get_channel_from_string(ctx: &Context, 
-  guild: &Guild, name_or_id: &str) -> Result<ChannelId, CommandError> {
-
-  match parse_mention(&name_or_id) {
-    Some(id) => {
-      let channel_id = ChannelId(id);
-      match guild.channels.get(&channel_id) {
-        Some(_) => Ok(channel_id),
-        None => error!("channel", id)
-      }
-    },
-    None => {
-      match guild.channel_id_from_name(&ctx.cache, &name_or_id).await {
-        Some(id) => Ok(id),
-        None =>  error!("channel", name_or_id)
-      }
-    }
-  }
 }
 
 pub async fn get_guild(ctx: &Context, msg: &Message) 

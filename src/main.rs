@@ -2,11 +2,11 @@ mod commands;
 mod util;
 
 use std::{
-  collections::{HashMap, HashSet}, env::var,
+  collections::{HashMap, HashSet}, env::var, ops::{Add, Sub},
   sync::{atomic::{AtomicBool, Ordering}, Arc}, time::Duration
 };
 
-use chrono::{Datelike, Utc};
+use chrono::{Datelike, Duration as ChronoDuration, Timelike, Utc};
 use chrono_tz::EST5EDT;
 use redis::{AsyncCommands, Client, RedisResult};
 use serde_json::json;
@@ -31,6 +31,7 @@ use serenity::{
 use tokio::{spawn, sync::{Mutex, RwLock}, time::{interval, sleep}};
 
 use commands::{
+  news::*,
   nya::*,
   poll::*,
   roles::*,
@@ -42,7 +43,7 @@ use commands::{
 use util::{
   rng::random_number,
   scheduler::{
-    Callable, RedisSchedulerKey,
+    Callable, MyVec, RedisSchedulerKey,
     RedisConnectionKey, RedisWrapper, Scheduler as RedisScheduler
   },
   sheets::{parse_date, query},
@@ -50,14 +51,13 @@ use util::{
 
 
 #[group]
+#[commands(briefing)]
+struct General;
+
+#[group]
 #[commands(add_roles, remove_roles, set_roles)]
 #[description = "Commands for managing roles (admin-only)"]
 struct Roles;
-
-#[group]
-#[commands(consent, delete, revoke, stats, uses)]
-#[description = "Manage and view emoji stats"]
-struct Stats;
 
 struct Handler {
   loop_running: AtomicBool
@@ -75,7 +75,7 @@ impl EventHandler for Handler {
           "stats" => interaction_stats_entrypoint(&ctx, &app_command).await,
           _ => Ok(())
         } {
-          let _ = app_command.create_interaction_response(&ctx.http, |resp|
+          let _ = app_command.create_interaction_response(ctx, |resp|
             resp.kind(InteractionResponseType::ChannelMessageWithSource)
             .interaction_response_data(|msg|
               msg.content(format!("An error occurred: {}", error)))).await;
@@ -87,7 +87,7 @@ impl EventHandler for Handler {
           _ => Ok(())
         } {
           println!("An error occurred: {:?}", error);
-          let _ = comp_inter.create_interaction_response(&ctx.http, |resp| {
+          let _ = comp_inter.create_interaction_response(ctx, |resp| {
             resp.kind(InteractionResponseType::ChannelMessageWithSource)
               .interaction_response_data(|msg| msg
                 .content(format!("Could not process {} request: {}", comp_inter.data.custom_id, error)))
@@ -353,7 +353,7 @@ async fn after(ctx: &Context, msg: &Message, _name: &str, result: CommandResult)
 #[hook]
 async fn dispatch_error(ctx: &Context, msg: &Message, error: DispatchError) {
   if !msg.author.bot {
-    let _ = msg.channel_id.say(&ctx.http,
+    let _ = msg.channel_id.say(ctx,
       &format!("Error in {:?}:\n{:?}", msg.content, error)).await;
   }
 }
@@ -382,6 +382,10 @@ async fn main() {
 
   let token = &var("RUST_BOT").expect("token");
 
+  let guild_id = var("SAFETY_GUILD_ID")
+    .expect("Expected Guild Id")
+    .parse::<u64>()
+    .expect("Id is not valid");
 
   let http = Http::new_with_token(&token);
 
@@ -420,8 +424,8 @@ async fn main() {
       .owners(owners)
       .prefixes(vec![">", "~"]))
     .help(&MY_HELP)
+    .group(&GENERAL_GROUP)
     .group(&ROLES_GROUP)
-    .group(&STATS_GROUP)
     .after(after)
     .on_dispatch_error(dispatch_error))
     .await
@@ -435,6 +439,7 @@ async fn main() {
 
     let mut data = client.data.write().await;
     data.insert::<CatKey>(cat_key);
+    data.insert::<BriefingGuildKey>(guild_id);
   }
 
   {
@@ -531,9 +536,77 @@ async fn main() {
       }
     });
 
-    {
-      let conn_key = Arc::new(Mutex::new(RedisWrapper(persistent_connection)));
+    let conn_key = Arc::new(Mutex::new(RedisWrapper(persistent_connection)));
+    let conn_clone = conn_key.clone();
 
+    let http_clone2 = client.cache_and_http.http.clone();
+
+    spawn(async move {
+      let now = Utc::now()
+        .with_timezone(&EST5EDT)
+        .with_hour(7).unwrap()
+        .with_minute(30).unwrap();
+
+      let mut this_weeks_monday = now.sub(
+        ChronoDuration::days(now.weekday()
+          .num_days_from_monday()
+          .into()));
+
+      let current_jobs: MyVec = {
+        let mut client = conn_clone.lock().await;
+        client.0.zrangebyscore(BRIEFING_KEY, "-inf", this_weeks_monday.timestamp())
+          .await
+          .expect("Expected to be able to get keys")
+      };
+      
+      if current_jobs.v.len() > 0 {
+        if let Err(error) = send_briefing(&current_jobs, birthday_announce_channel, &http_clone2).await {
+          println!("{}", error);
+        } else {
+          let _: u64 = {
+            let mut client = conn_clone.lock().await;
+            client.0.zrembyscore(BRIEFING_KEY, "-inf", this_weeks_monday.timestamp())
+              .await
+              .expect("Expected to be able to remove old keys")
+          };
+        }
+      }
+
+      loop {
+        let next_time = this_weeks_monday
+          .add(ChronoDuration::weeks(1));
+
+        let duration_to_sleep = next_time
+          .signed_duration_since(now)
+          .to_std().unwrap();
+
+        sleep(duration_to_sleep).await;
+
+        let current_jobs: MyVec = {
+          let mut client = conn_clone.lock().await;
+          client.0.zrangebyscore(BRIEFING_KEY, "-inf", next_time.timestamp())
+            .await
+            .expect("Expected to be able to get keys")
+        };
+        
+        if current_jobs.v.len() > 0 {
+          if let Err(error) = send_briefing(&current_jobs, birthday_announce_channel, &http_clone2).await {
+            println!("{}", error);
+          } else {
+            let _: u64 = {
+              let mut client = conn_clone.lock().await;
+              client.0.zrembyscore(BRIEFING_KEY, "-inf", next_time.timestamp())
+                .await
+                .expect("Expected to be able to remove old keys")
+            };
+          }
+        }
+
+        this_weeks_monday = now;
+      }
+    });
+
+    {
       let mut data = client.data.write().await;
       data.insert::<RedisSchedulerKey>(redis_scheduler_arc);
       data.insert::<RedisConnectionKey>(conn_key);

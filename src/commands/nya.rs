@@ -17,10 +17,10 @@ impl TypeMapKey for CatKey {
 
 #[derive(Debug, Deserialize)]
 struct Cat {
-  id: String,
+  // id: String,
   url: String,
-  width: u32,
-  height: u32
+  // width: u32,
+  // height: u32
 }
 
 pub fn nya_command() -> Value {
@@ -54,7 +54,7 @@ pub async fn interaction_nya(ctx: &Context, interaction: &ApplicationCommandInte
       match resp.json::<Vec<Cat>>().await {
         Ok(cats) => {
           let url = &cats[0].url;
-          let _ = interaction.create_interaction_response(&ctx.http, |response| {
+          let _ = interaction.create_interaction_response(ctx, |response| {
             response.kind(InteractionResponseType::ChannelMessageWithSource)
               .interaction_response_data(|msg| msg
                 .create_embed(|e| {

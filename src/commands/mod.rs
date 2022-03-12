@@ -1,6 +1,7 @@
 #![macro_use]
 pub mod util;
 
+pub mod news;
 pub mod nya;
 pub mod poll;
 pub mod roles;

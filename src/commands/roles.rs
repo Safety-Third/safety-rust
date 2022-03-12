@@ -129,7 +129,7 @@ async fn change_roles<F>(ctx: &Context, msg: &Message, mut args: Args, mut func:
         .map(|role| role.mention().to_string())
         .collect();
 
-      let _ = msg.channel_id.say(&ctx.http, 
+      let _ = msg.channel_id.say(ctx, 
         format!("New roles for {}: {:?}",
           member.mention(), roles)).await;
 

@@ -105,7 +105,7 @@ pub async fn interaction_poll(ctx: &Context,
     }
   };
 
-  if let Err(error) = interaction.create_interaction_response(&ctx.http, |resp| {
+  if let Err(error) = interaction.create_interaction_response(ctx, |resp| {
     resp.kind(InteractionResponseType::ChannelMessageWithSource)
     .interaction_response_data(|msg| msg
       .content(format!("Poll: '{}' by {}", &topic_str, &mention))
@@ -143,13 +143,13 @@ pub async fn interaction_poll(ctx: &Context,
     return Err(error.to_string())
   }
 
-  let message = match interaction.get_interaction_response(&ctx.http).await {
+  let message = match interaction.get_interaction_response(ctx).await {
     Ok(msg) => msg,
     Err(error) => return Err(error.to_string())
   };
 
   for react in reactions {
-    let _ = message.react(&ctx.http, react).await;
+    let _ = message.react(ctx, react).await;
   }
 
   let poll = Poll {
@@ -172,7 +172,7 @@ pub fn add_poll_command() -> Value {
   let mut options: Vec<Value> = vec![
     json!({
       "type": ApplicationCommandOptionType::String,
-      "name": "pill_id",
+      "name": "poll_id",
       "description": "The id of the poll you wish to edit",
       "required": true
     }),
@@ -199,8 +199,8 @@ pub async fn interaction_add_poll(ctx: &Context,
 
   let data = &interaction.data;
 
-  if data.options.len() < 4 {
-    return Err(String::from("You must have a topic, date, and at least two options"))
+  if data.options.len() < 2 {
+    return Err(String::from("You must have a poll ID and at least one new option"))
   }
 
 
@@ -230,7 +230,7 @@ pub async fn handle_poll_interaction(ctx: &Context,
 
         match poll {
           Ok(result) => {
-            let _ = interaction.create_interaction_response(&ctx.http, |resp| {
+            let _ = interaction.create_interaction_response(ctx, |resp| {
               resp.kind(InteractionResponseType::UpdateMessage)
                 .interaction_response_data(|resp| resp.components(|comp| comp))
             }).await;
@@ -245,7 +245,7 @@ pub async fn handle_poll_interaction(ctx: &Context,
         }
       },
       "delete" => {
-        if let Err(error) = msg.delete(&ctx.http).await {
+        if let Err(error) = msg.delete(ctx).await {
           Err(format!("Could not delete poll: {}", error))
         } else {
           let lock = {
@@ -266,7 +266,7 @@ pub async fn handle_poll_interaction(ctx: &Context,
       _ => Ok(())
     }
   } else {
-    let _ = interaction.create_interaction_response(&ctx.http, |resp| {
+    let _ = interaction.create_interaction_response(ctx, |resp| {
       resp.kind(InteractionResponseType::DeferredUpdateMessage)
     }).await;
 
