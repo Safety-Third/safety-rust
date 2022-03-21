@@ -542,15 +542,14 @@ async fn main() {
     let http_clone2 = client.cache_and_http.http.clone();
 
     spawn(async move {
-      let now = Utc::now()
-        .with_timezone(&EST5EDT)
-        .with_hour(7).unwrap()
-        .with_minute(30).unwrap();
+      let mut now = Utc::now().with_timezone(&EST5EDT);
 
       let mut this_weeks_monday = now.sub(
         ChronoDuration::days(now.weekday()
           .num_days_from_monday()
-          .into()));
+          .into()))
+          .with_hour(7).unwrap()
+          .with_minute(30).unwrap();
 
       let current_jobs: MyVec = {
         let mut client = conn_clone.lock().await;
@@ -573,8 +572,7 @@ async fn main() {
       }
 
       loop {
-        let next_time = this_weeks_monday
-          .add(ChronoDuration::weeks(1));
+        let next_time = this_weeks_monday.add(ChronoDuration::weeks(1));
 
         let duration_to_sleep = next_time
           .signed_duration_since(now)
@@ -602,7 +600,8 @@ async fn main() {
           }
         }
 
-        this_weeks_monday = now;
+        this_weeks_monday = next_time;
+        now = Utc::now().with_timezone(&EST5EDT);
       }
     });
 
