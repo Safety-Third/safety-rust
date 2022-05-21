@@ -2,34 +2,38 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use lazy_static::lazy_static;
-use rand::{Rng,thread_rng};
+use rand::{thread_rng, Rng};
 use regex::Regex;
-use serde_json::{Value, json};
 use serenity::{
-  prelude::*, model::prelude::*,
-  model::prelude::interactions::application_command::*
+  builder::CreateApplicationCommands, model::prelude::interactions::application_command::*,
+  model::prelude::*, prelude::*,
 };
 
 use super::util::get_mention;
 
-pub fn roll_command() -> Value {
-  let options: Vec<Value> = (1..=20).map(|idx| json!({
-    "type": ApplicationCommandOptionType::String,
-    "name": format!("die-{}", idx),
-    "description": "A die roll like 2d20+5 or 4d4dldh2+1 (4d4, drop low, 2 highest + 1)",
-    "required": idx == 1
-  })).collect();
+pub fn roll_command(commands: &mut CreateApplicationCommands) -> &mut CreateApplicationCommands {
+  commands.create_application_command(|command| {
+    let mut comm = command
+      .name("roll")
+      .description("Roll one or more sets of dice");
 
-  return json!({
-    "name": "roll",
-    "description": "Roll one to six dice groups",
-    "options": options
-  });
+    for idx in 1..=20 {
+      comm = comm.create_option(|op| {
+        op.name(format!("die-{}", idx))
+          .kind(ApplicationCommandOptionType::String)
+          .description("A die roll like 2d20+5 or 4d4dldh2+1 (4d4, drop low, 2 highest + 1)")
+          .required(idx == 1)
+      })
+    }
+
+    comm
+  })
 }
 
-pub async fn interaction_roll(ctx: &Context,
-  interaction: &ApplicationCommandInteraction) -> Result<(), String> {
-
+pub async fn interaction_roll(
+  ctx: &Context,
+  interaction: &ApplicationCommandInteraction,
+) -> Result<(), String> {
   let data = &interaction.data;
 
   let mut total_string = String::from(">>> ");
@@ -43,8 +47,8 @@ pub async fn interaction_roll(ctx: &Context,
           Ok((count, message)) => {
             total_sum += count;
             total_string += &message;
-          },
-          Err(error) => return Err(error.to_string())
+          }
+          Err(error) => return Err(error.to_string()),
         };
       }
     }
@@ -52,36 +56,43 @@ pub async fn interaction_roll(ctx: &Context,
 
   let mention = get_mention(&interaction);
 
-  let final_msg = format!("{}, you rolled a total of **{}**\n{}\n",
-    mention, total_sum, total_string);
+  let final_msg = format!(
+    "{}, you rolled a total of **{}**\n{}\n",
+    mention, total_sum, total_string
+  );
 
-  let _ = interaction.create_interaction_response(ctx, |response| {
-    response.kind(InteractionResponseType::ChannelMessageWithSource)
-    .interaction_response_data(|message| message.content(final_msg))
-  }).await;
+  let _ = interaction
+    .create_interaction_response(ctx, |response| {
+      response
+        .kind(InteractionResponseType::ChannelMessageWithSource)
+        .interaction_response_data(|message| message.content(final_msg))
+    })
+    .await;
 
   Ok(())
 }
 
 fn handle_roll(roll_str: &str) -> Result<(i32, String), String> {
   lazy_static! {
-    static ref RE: Regex = Regex::new(r"(?x)
+    static ref RE: Regex = Regex::new(
+      r"(?x)
       (?P<count>\d+)  # number of times to roll this die
       d(?P<size>\d+)  # number of sides (nonzero)
       ((?P<addition>[+-]\d+))?  # modifier for the overall roll
       (dl(?P<low>\d*))?         # how many high rolls to drop
       (dh(?P<high>\d*))?        # how many lows to drop"
-    ).unwrap();
+    )
+    .unwrap();
   }
 
   let caps = match RE.captures(roll_str) {
     Some(captures) => captures,
-    None =>  return error_hash(roll_str, "Not a valid die roll")
+    None => return error_hash(roll_str, "Not a valid die roll"),
   };
 
   let size = match caps.name("size").unwrap().as_str().parse::<u32>() {
     Ok(int) => int,
-    Err(_) => return error_hash(roll_str, "Must provide a valid, nonnegative size")
+    Err(_) => return error_hash(roll_str, "Must provide a valid, nonnegative size"),
   };
 
   if size == 0 {
@@ -90,21 +101,22 @@ fn handle_roll(roll_str: &str) -> Result<(i32, String), String> {
 
   let count = match caps.name("count").unwrap().as_str().parse::<u32>() {
     Ok(int) => int,
-    Err(_) => return error_hash(roll_str, "Must provide a valid, nonnegative number of dice")
+    Err(_) => return error_hash(roll_str, "Must provide a valid, nonnegative number of dice"),
   };
 
   if count == 0 {
-    return error_hash(roll_str, "I *can* roll zero dice, but am morally obligated not to");
+    return error_hash(
+      roll_str,
+      "I *can* roll zero dice, but am morally obligated not to",
+    );
   }
 
   let addition = match caps.name("addition") {
-    Some(number) => {
-      match number.as_str().parse::<i32>() {
-        Ok(int) => int,
-        Err(_) => return error_hash(roll_str, "Modifier must be a number")
-      }
+    Some(number) => match number.as_str().parse::<i32>() {
+      Ok(int) => int,
+      Err(_) => return error_hash(roll_str, "Modifier must be a number"),
     },
-    None => 0
+    None => 0,
   };
 
   let low = match caps.name("low") {
@@ -115,11 +127,11 @@ fn handle_roll(roll_str: &str) -> Result<(i32, String), String> {
       } else {
         match string_val.parse::<u32>() {
           Ok(int) => int,
-          Err(_) => return error_hash(roll_str, "Low drop must be a number")
+          Err(_) => return error_hash(roll_str, "Low drop must be a number"),
         }
       }
-    },
-    None => 0
+    }
+    None => 0,
   };
 
   let high = match caps.name("high") {
@@ -130,17 +142,22 @@ fn handle_roll(roll_str: &str) -> Result<(i32, String), String> {
       } else {
         match string_val.parse::<u32>() {
           Ok(int) => int,
-          Err(_) => return error_hash(roll_str, "High drop must be a number")
+          Err(_) => return error_hash(roll_str, "High drop must be a number"),
         }
       }
-    },
-    None => 0
+    }
+    None => 0,
   };
 
   if low + high >= count {
-    return error_hash(roll_str, &format!(
-      "You want to drop {} dice but are only rolling {}. What are you even doing?",
-      low + high, count));
+    return error_hash(
+      roll_str,
+      &format!(
+        "You want to drop {} dice but are only rolling {}. What are you even doing?",
+        low + high,
+        count
+      ),
+    );
   }
 
   let mut rolls: Vec<i32> = Vec::new();
@@ -210,18 +227,17 @@ fn error_hash(die: &str, error: &str) -> Result<(i32, String), String> {
 
   let rng = thread_rng().gen_range(1..=hashed_val);
 
-  Err(
-    format!("**{}**.\nBut here's a guess for {} = 1d{}: **{}**", error, die, hashed_val, rng))
+  Err(format!(
+    "**{}**.\nBut here's a guess for {} = 1d{}: **{}**",
+    error, die, hashed_val, rng
+  ))
 }
 
 /// Creates a String representation of `numbers`, separated by commas
 /// # Arguments
 /// - `numbers` - a vector of numbers
 fn pretty_vec(numbers: &[i32]) -> String {
-  let string_list: Vec<String> = numbers
-    .iter()
-    .map(|number| number.to_string())
-    .collect();
+  let string_list: Vec<String> = numbers.iter().map(|number| number.to_string()).collect();
 
   string_list.join(", ")
 }

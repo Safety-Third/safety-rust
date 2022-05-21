@@ -1,61 +1,107 @@
+use std::collections::HashSet;
+
 use chrono::{Duration, Utc};
-use chrono_tz::{EST5EDT};
+use chrono_tz::EST5EDT;
 use lazy_static::lazy_static;
 use regex::Regex;
-use serde_json::{Value, json};
 use serenity::{
+  builder::CreateApplicationCommands,
   model::prelude::interactions::{
     application_command::*,
-    message_component::{ButtonStyle, MessageComponentInteraction}
+    message_component::{ButtonStyle, MessageComponentInteraction},
   },
-  model::prelude::*, prelude::*, utils::Colour,
+  model::prelude::*,
+  prelude::*,
+  utils::Color,
 };
 
-use crate::util::scheduler::{EMOJI_ORDER, Callable, Poll, RedisSchedulerKey};
-use super::{
-  util::{format_duration, get_str_or_error, get_user}
-};
+use super::util::{format_duration, get_str_or_error, get_user};
+use crate::util::scheduler::{Callable, Poll, RedisSchedulerKey, EMOJI_ORDER, MAX_OPTIONS};
 
-pub fn poll_command() -> Value {
-  let mut options: Vec<Value> = vec![
-    json!({
-      "type": ApplicationCommandOptionType::String,
-      "name": "topic",
-      "description": "The topic of this poll",
-      "required": true
-    }),
-    json!({
-      "type": ApplicationCommandOptionType::String,
-      "name": "time",
-      "description": "In the form XdXhXmXs (3d2h1m1s 3 day, 2 hour, 1 minute, 1 sec; 2m30s 2 minute, 30 second)",
-      "required": true
-    }),
+pub fn poll_command(commands: &mut CreateApplicationCommands) -> &mut CreateApplicationCommands {
+  commands.create_application_command(|command|
+    command.name("poll")
+      .description("Creates an emoji-based poll for a certain topic.")
+      .create_option(|new| {
+        let mut new = new.name("new")
+          .kind(ApplicationCommandOptionType::SubCommand)
+          .description("Create a new poll")
+          .create_sub_option(|topic| topic
+            .name("topic")
+            .kind(ApplicationCommandOptionType::String)
+            .description("The topic of this poll")
+            .required(true)
+          )
+          .create_sub_option(|time| time
+            .name("time")
+            .kind(ApplicationCommandOptionType::String)
+            .description("In the form XdXhXmXs (3d2h1m1s 3 day, 2 hour, 1 minute, 1 sec; 2m30s 2 minute, 30 second)")
+            .required(true)
+          );
 
-  ];
+        for idx in 1..=MAX_OPTIONS {
+          new = new.create_sub_option(|op| op
+            .name(format!("option-{}", idx))
+            .kind(ApplicationCommandOptionType::String)
+            .description(format!("poll option {}", idx))
+            .required(idx < 3)
+          );
+        }
 
-  for idx in 1..=20 {
-    options.push(json!({
-      "type": ApplicationCommandOptionType::String,
-      "name": format!("option-{}", idx),
-      "description": format!("poll option {}", idx),
-      "required": idx < 3
-    }))
-  }
+        new
+      })
+      .create_option(|add| {
+        let mut add = add.name("options_add")
+          .kind(ApplicationCommandOptionType::SubCommand)
+          .description("Add one or more options to an existing poll")
+          .create_sub_option(|id| id
+            .name("poll_id")
+            .kind(ApplicationCommandOptionType::String)
+            .description("The id of the poll you wish to edit")
+            .required(true)
+          );
 
-  return json!({
-    "name": "poll",
-    "description": "Creates an emoji-based poll for a certain topic.",
-    "options": options
-  })
+        for idx in 1..=18 {
+          add = add.create_sub_option(|op| op
+            .name(format!("option-{}", idx))
+            .kind(ApplicationCommandOptionType::String)
+            .description(format!("poll option {}", idx))
+            .required(idx == 1)
+          );
+        }
+
+        add
+      })
+  )
 }
 
-pub async fn interaction_poll(ctx: &Context,
-  interaction: &ApplicationCommandInteraction) -> Result<(), String> {
-
+pub async fn interaction_poll(
+  ctx: &Context,
+  interaction: &ApplicationCommandInteraction,
+) -> Result<(), String> {
   let data = &interaction.data;
 
-  if data.options.len() < 4 {
-    return Err(String::from("You must have a topic, date, and at least two options"))
+  if data.options.len() < 1 {
+    return Err(String::from("Must have subcommand"));
+  }
+
+  match interaction.data.options[0].name.as_str() {
+    "new" => new_poll(ctx, interaction).await,
+    "options_add" => option_add(ctx, interaction).await,
+    _ => Err(String::from("Unexpected command")),
+  }
+}
+
+async fn new_poll(
+  ctx: &Context,
+  interaction: &ApplicationCommandInteraction,
+) -> Result<(), String> {
+  let data_options = &interaction.data.options[0].options;
+
+  if data_options.len() < 4 {
+    return Err(String::from(
+      "You must have a topic, date, and at least two options",
+    ));
   }
 
   let user = get_user(&interaction);
@@ -65,30 +111,36 @@ pub async fn interaction_poll(ctx: &Context,
   let channel = interaction.channel_id;
 
   let duration = {
-    let date_str = get_str_or_error(&data.options[1].value, "You must provide a time")?;
+    let date_str = get_str_or_error(&data_options[1].value, "You must provide a time")?;
     parse_time(&date_str.trim())?
   };
 
-  let topic_str = get_str_or_error(&data.options[0].value, "You must provide a topic")?;
+  let topic_str = get_str_or_error(&data_options[0].value, "You must provide a topic")?;
   let mut options: Vec<String> = vec![];
+  let mut existing: HashSet<String> = HashSet::new();
 
-  for option in &data.options[2..] {
+  for option in &data_options[2..] {
     if let Some(op) = &option.value {
       if let Some(op_str) = op.as_str() {
-        options.push(String::from(op_str.trim()));
+        let new_option = String::from(op_str.trim());
+
+        if !existing.contains(&new_option) {
+          existing.insert(new_option.clone());
+          options.push(new_option);
+        }
+
         continue;
       }
     }
 
-    return Err(format!("Error parsing field {}. The value was {:?}", option.name, option.value))
+    return Err(format!(
+      "Error parsing field {}. The value was {:?}",
+      option.name, option.value
+    ));
   }
-
-  let lock = {
-    let mut context = ctx.data.write().await;
-    context.get_mut::<RedisSchedulerKey>()
-      .expect("Expected redis scheduler")
-      .clone()
-  };
+  if options.len() > EMOJI_ORDER.len() {
+    return Err(format!("You cannot have more than {} emojis", MAX_OPTIONS));
+  }
 
   let time = (Utc::now() + duration).with_timezone(&EST5EDT);
 
@@ -97,55 +149,72 @@ pub async fn interaction_poll(ctx: &Context,
     .map(|emoji| ReactionType::Unicode(emoji.to_string()))
     .collect();
 
+  let lock = {
+    let mut context = ctx.data.write().await;
+    context
+      .get_mut::<RedisSchedulerKey>()
+      .expect("Expected redis scheduler")
+      .clone()
+  };
+
   let poll_id = {
     let mut redis_scheduler = lock.lock().await;
     match redis_scheduler.reserve_id().await {
       Ok(id) => id,
-      Err(error) => return Err(error.to_string())
+      Err(error) => return Err(error.to_string()),
     }
   };
 
-  if let Err(error) = interaction.create_interaction_response(ctx, |resp| {
-    resp.kind(InteractionResponseType::ChannelMessageWithSource)
-    .interaction_response_data(|msg| msg
-      .content(format!("Poll: '{}' by {}", &topic_str, &mention))
-      .create_embed(|e| {
-        let mut description = String::from(">>> ");
+  if let Err(error) = interaction
+    .create_interaction_response(ctx, |resp| {
+      resp
+        .kind(InteractionResponseType::ChannelMessageWithSource)
+        .interaction_response_data(|msg| {
+          msg
+            .content(format!("Poll: '{}' by {}", &topic_str, &mention))
+            .embed(|e| {
+              let mut description = String::from(">>> ");
 
-        for (count, option) in options.iter().enumerate() {
-          description += &format!("{}. {}\n", count + 1, &option);
-        }
+              for (count, option) in options.iter().enumerate() {
+                description += &format!("{}. {}\n", count + 1, &option);
+              }
 
-        let time_str = time.format("%D %r %Z");
+              let time_str = time.format("%D %r %Z");
 
-        e
-          .colour(Colour::BLITZ_BLUE)
-          .title(format!("Poll: {}", &topic_str))
-          .field("duration", format_duration(&duration), true)
-          .field("poll id", &poll_id, true)
-          .field("ends at", time_str, false)
-          .description(description)
-      })
-      .components(|comp| comp.create_action_row(|row|
-        row.create_button(|button| button
-            .style(ButtonStyle::Danger)
-            .label("Delete this poll")
-            .custom_id("delete")
-        )
-          .create_button(|button| button
-            .style(ButtonStyle::Secondary)
-            .label("Close this poll")
-            .custom_id("close"))
-      ))
-    )
-
-  }).await {
-    return Err(error.to_string())
+              e.color(Color::BLITZ_BLUE)
+                .title(format!("Poll: {}", &topic_str))
+                .field("duration", format_duration(&duration), true)
+                .field("poll id", &poll_id, true)
+                .field("ends at", time_str, false)
+                .description(description)
+            })
+            .components(|comp| {
+              comp.create_action_row(|row| {
+                row
+                  .create_button(|button| {
+                    button
+                      .style(ButtonStyle::Danger)
+                      .label("Delete this poll")
+                      .custom_id("delete")
+                  })
+                  .create_button(|button| {
+                    button
+                      .style(ButtonStyle::Secondary)
+                      .label("Close this poll")
+                      .custom_id("close")
+                  })
+              })
+            })
+        })
+    })
+    .await
+  {
+    return Err(error.to_string());
   }
 
   let message = match interaction.get_interaction_response(ctx).await {
     Ok(msg) => msg,
-    Err(error) => return Err(error.to_string())
+    Err(error) => return Err(error.to_string()),
   };
 
   for react in reactions {
@@ -156,60 +225,210 @@ pub async fn interaction_poll(ctx: &Context,
     author: author_id,
     channel: channel.0,
     message: message.id.0,
-    topic: topic_str
+    topic: topic_str,
   };
 
   {
     let mut redis_scheduler = lock.lock().await;
-    match redis_scheduler.schedule_job(&poll, &poll_id, time.timestamp(), duration.num_seconds()).await {
+    match redis_scheduler
+      .schedule_job(&poll, &poll_id, time.timestamp(), duration.num_seconds())
+      .await
+    {
       Ok(_) => Ok(()),
-      Err(error) => Err(error.to_string())
+      Err(error) => Err(error.to_string()),
     }
   }
 }
 
-pub fn add_poll_command() -> Value {
-  let mut options: Vec<Value> = vec![
-    json!({
-      "type": ApplicationCommandOptionType::String,
-      "name": "poll_id",
-      "description": "The id of the poll you wish to edit",
-      "required": true
-    }),
-  ];
+async fn option_add(
+  ctx: &Context,
+  interaction: &ApplicationCommandInteraction,
+) -> Result<(), String> {
+  let data_options = &interaction.data.options[0].options;
 
-  for idx in 1..=18 {
-    options.push(json!({
-      "type": ApplicationCommandOptionType::String,
-      "name": format!("option-{}", idx),
-      "description": format!("poll option {}", idx),
-      "required": idx == 1
-    }))
+  if data_options.len() < 2 {
+    return Err(String::from(
+      "You must have a poll ID and at least one new option",
+    ));
   }
 
-  return json!({
-    "name": "poll",
-    "description": "Creates an emoji-based poll for a certain topic.",
-    "options": options
-  })
-}
+  let poll_id = get_str_or_error(&data_options[0].value, "You must provide a poll ID")?;
 
-pub async fn interaction_add_poll(ctx: &Context,
-  interaction: &ApplicationCommandInteraction) -> Result<(), String> {
+  let mut options: Vec<String> = vec![];
 
-  let data = &interaction.data;
+  for option in &data_options[1..] {
+    if let Some(op) = &option.value {
+      if let Some(op_str) = op.as_str() {
+        options.push(String::from(op_str.trim()));
+        continue;
+      }
+    }
 
-  if data.options.len() < 2 {
-    return Err(String::from("You must have a poll ID and at least one new option"))
+    return Err(format!(
+      "Error parsing field {}. The value was {:?}",
+      option.name, option.value
+    ));
   }
 
+  let poll: Poll = {
+    let lock = {
+      let mut context = ctx.data.write().await;
+      context
+        .get_mut::<RedisSchedulerKey>()
+        .expect("Expected redis scheduler")
+        .clone()
+    };
 
-  Ok(())
+    let mut redis_scheduler = lock.lock().await;
+    match redis_scheduler.get_job(&poll_id).await {
+      Ok(result) => result,
+      Err(error) => return Err(error.to_string()),
+    }
+  };
+
+  if poll.author != interaction.user.id.0 {
+    return Err(String::from("Only the creator of a poll can edit it"));
+  }
+  let mut message: Message = match ChannelId(poll.channel)
+    .message(&ctx.http, poll.message)
+    .await
+  {
+    Ok(msg) => msg,
+    Err(error) => {
+      return Err(format!(
+        "An error occurred when trying to fetch the poll: {}",
+        error
+      ))
+    }
+  };
+
+  if message.embeds.is_empty() {
+    return Err(String::from(
+      "Message does not have embeds; something has gone terribly wrong",
+    ));
+  }
+
+  let mut existing_options: Vec<&str> = vec![];
+  let mut all_options: HashSet<&str> = HashSet::new();
+  let embed = &message.embeds[0];
+
+  if let Some(content) = &embed.description {
+    for option in content.split('\n') {
+      let index = match option.find('.') {
+        Some(loc) => loc + 2,
+        None => 0,
+      };
+
+      let option_string = &option[index..];
+
+      all_options.insert(option_string);
+      existing_options.push(option_string);
+    }
+  }
+
+  let mut description = embed.description.clone().unwrap_or(String::from(""));
+  let mut added: Vec<&str> = vec![];
+
+  let existing_len = existing_options.len();
+  let mut count = 0;
+
+  {
+    let offset = 1 + existing_len;
+
+    for option in &options {
+      let op_as_string = &option.as_str();
+      if !all_options.contains(op_as_string) {
+        added.push(option);
+        description += &format!("\n{}. {}", count + offset, &option);
+        all_options.insert(op_as_string);
+        count += 1;
+      }
+    }
+  }
+
+  if all_options.len() > MAX_OPTIONS {
+    let smart_plural = if added.len() == 1 {
+      "option"
+    } else {
+      "options"
+    };
+    return Err(format!(
+      "There are already {} options. Adding an additional {} {} will exceed the 20 option limit.",
+      existing_len,
+      added.len(),
+      smart_plural
+    ));
+  }
+
+  if count == 0 {
+    let _ = interaction
+      .create_interaction_response(ctx, |resp| {
+        resp
+          .kind(InteractionResponseType::ChannelMessageWithSource)
+          .interaction_response_data(|msg| {
+            msg
+              .content("All the options you asked to add already exist; no changes have been made.")
+              .flags(InteractionApplicationCommandCallbackDataFlags::EPHEMERAL)
+          })
+      })
+      .await;
+
+    return Ok(());
+  }
+
+  let ending_len = existing_len + count;
+
+  let title = embed.title.clone().unwrap_or(String::from(""));
+  let fields: Vec<(String, String, bool)> = embed
+    .fields
+    .iter()
+    .map(|field| (field.name.clone(), field.value.clone(), field.inline))
+    .collect();
+
+  match message
+    .edit(&ctx.http, |msg| {
+      msg.embed(|e| {
+        e.color(Color::BLITZ_BLUE)
+          .title(title)
+          .fields(fields)
+          .description(description)
+      })
+    })
+    .await
+  {
+    Ok(_) => {
+      let _ = interaction
+        .create_interaction_response(ctx, |resp| {
+          resp
+            .kind(InteractionResponseType::ChannelMessageWithSource)
+            .interaction_response_data(|msg| {
+              msg.content(format!(
+                "New options for poll **{}**:\n>>> {}",
+                poll_id,
+                added.join("\n")
+              ))
+            })
+        })
+        .await;
+      let reactions: Vec<ReactionType> = EMOJI_ORDER[existing_len..ending_len]
+        .iter()
+        .map(|emoji| ReactionType::Unicode(emoji.to_string()))
+        .collect();
+
+      for react in reactions {
+        let _ = message.react(ctx, react).await;
+      }
+
+      Ok(())
+    }
+    Err(error) => Err(format!("Could not edit poll: {}", error)),
+  }
 }
 
-pub async fn handle_poll_interaction(ctx: &Context,
-  interaction: &MessageComponentInteraction) -> Result<(), String> {
-
+pub async fn handle_poll_interaction(
+  ctx: &Context,
+  interaction: &MessageComponentInteraction,
+) -> Result<(), String> {
   let msg = &interaction.message;
 
   // are you the author?
@@ -219,62 +438,74 @@ pub async fn handle_poll_interaction(ctx: &Context,
         let poll = {
           let lock = {
             let mut context = ctx.data.write().await;
-            context.get_mut::<RedisSchedulerKey>()
+            context
+              .get_mut::<RedisSchedulerKey>()
               .expect("Expected redis instance")
               .clone()
           };
 
           let mut redis_scheduler = lock.lock().await;
-          redis_scheduler.pop_job(&msg.embeds[0].fields[1].value).await
+          redis_scheduler
+            .pop_job(&msg.embeds[0].fields[1].value)
+            .await
         };
 
         match poll {
           Ok(result) => {
-            let _ = interaction.create_interaction_response(ctx, |resp| {
-              resp.kind(InteractionResponseType::UpdateMessage)
-                .interaction_response_data(|resp| resp.components(|comp| comp))
-            }).await;
+            let _ = interaction
+              .create_interaction_response(ctx, |resp| {
+                resp
+                  .kind(InteractionResponseType::UpdateMessage)
+                  .interaction_response_data(|resp| resp.components(|comp| comp))
+              })
+              .await;
 
             if let Some(real_poll) = result {
               real_poll.call(&ctx.http).await;
             }
 
             Ok(())
-          },
-          Err(error) => Err(format!("An error occurred when trying to close the poll: {}", error))
+          }
+          Err(error) => Err(format!(
+            "An error occurred when trying to close the poll: {}",
+            error
+          )),
         }
-      },
+      }
       "delete" => {
         if let Err(error) = msg.delete(ctx).await {
           Err(format!("Could not delete poll: {}", error))
         } else {
           let lock = {
             let mut context = ctx.data.write().await;
-            context.get_mut::<RedisSchedulerKey>()
+            context
+              .get_mut::<RedisSchedulerKey>()
               .expect("Expected redis instance")
               .clone()
           };
 
           {
             let mut redis_scheduler = lock.lock().await;
-            let _ = redis_scheduler.remove_job(&msg.embeds[0].fields[1].value).await;
+            let _ = redis_scheduler
+              .remove_job(&msg.embeds[0].fields[1].value)
+              .await;
           };
 
           Ok(())
         }
-      },
-      _ => Ok(())
+      }
+      _ => Ok(()),
     }
   } else {
-    let _ = interaction.create_interaction_response(ctx, |resp| {
-      resp.kind(InteractionResponseType::DeferredUpdateMessage)
-    }).await;
+    let _ = interaction
+      .create_interaction_response(ctx, |resp| {
+        resp.kind(InteractionResponseType::DeferredUpdateMessage)
+      })
+      .await;
 
     Ok(())
   }
 }
-
-
 
 /// Converts a potential "timing string" (day, hour, minute, second) to a Duration
 ///
@@ -288,12 +519,14 @@ pub async fn handle_poll_interaction(ctx: &Context,
 fn parse_time(timing: &str) -> Result<Duration, &str> {
   lazy_static! {
     static ref MIN_DURATION: Duration = Duration::seconds(30);
-
-    static ref RE: Regex = Regex::new(r"(?x)
+    static ref RE: Regex = Regex::new(
+      r"(?x)
       (?P<days>\d+d)?
       (?P<hours>\d+h)?
       (?P<minutes>\d+m)?
-      (?P<seconds>\d+s)?$").unwrap();
+      (?P<seconds>\d+s)?$"
+    )
+    .unwrap();
   }
 
   if let Ok(time_in_minutes) = timing.parse::<i64>() {
@@ -302,8 +535,9 @@ fn parse_time(timing: &str) -> Result<Duration, &str> {
 
   let caps = match RE.captures(timing) {
     Some(captures) => captures,
-    None =>
-      return Err("Invalid format. Should be of the form `(\\d+d)?(\\d+h)?(\\d+m?)?` Or a number (for seconds")
+    None => return Err(
+      "Invalid format. Should be of the form `(\\d+d)?(\\d+h)?(\\d+m?)?` Or a number (for seconds",
+    ),
   };
 
   let mut duration = Duration::zero();
@@ -313,7 +547,7 @@ fn parse_time(timing: &str) -> Result<Duration, &str> {
 
     match days_str[..days_str.len() - 1].parse::<i64>() {
       Ok(days_int) => duration = duration + Duration::days(days_int),
-      Err(_) => return Err("Must provide a numeric value for days")
+      Err(_) => return Err("Must provide a numeric value for days"),
     }
   }
 
@@ -322,14 +556,14 @@ fn parse_time(timing: &str) -> Result<Duration, &str> {
 
     match hours_str[..hours_str.len() - 1].parse::<i64>() {
       Ok(hours_int) => duration = duration + Duration::hours(hours_int),
-      Err(_) => return Err("Must provide a numeric value for hours")
+      Err(_) => return Err("Must provide a numeric value for hours"),
     }
   }
 
   if let Some(minutes) = caps.name("minutes") {
     match minutes.as_str().replace('m', "").parse::<i64>() {
       Ok(minutes_int) => duration = duration + Duration::minutes(minutes_int),
-      Err(_) => return Err("Must provide a numeric value for minutes")
+      Err(_) => return Err("Must provide a numeric value for minutes"),
     }
   }
 
@@ -338,7 +572,7 @@ fn parse_time(timing: &str) -> Result<Duration, &str> {
 
     match seconds_str[..seconds_str.len() - 1].parse::<i64>() {
       Ok(seconds_int) => duration = duration + Duration::seconds(seconds_int),
-      Err(_) => return Err("Must provide a numeric value for seconds")
+      Err(_) => return Err("Must provide a numeric value for seconds"),
     }
   }
 

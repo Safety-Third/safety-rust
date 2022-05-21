@@ -1,12 +1,10 @@
 use std::cell::RefCell;
 
-use rand::{distributions::Alphanumeric, rngs::SmallRng, SeedableRng, Rng};
+use rand::{distributions::Alphanumeric, rngs::SmallRng, Rng, SeedableRng};
 
 thread_local! {
   static RNG: RefCell<SmallRng> = RefCell::new(SmallRng::from_entropy());
 }
-
-
 
 pub fn random_id() -> String {
   RNG.with(|rng| {
@@ -21,6 +19,5 @@ pub fn random_id() -> String {
 
 #[inline]
 pub fn random_number(end: usize) -> usize {
-  RNG.with(|rng| 
-    rng.borrow_mut().gen_range(0..end))
+  RNG.with(|rng| rng.borrow_mut().gen_range(0..end))
 }

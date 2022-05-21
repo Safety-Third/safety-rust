@@ -1,23 +1,26 @@
 #![macro_use]
 
+use std::str::FromStr;
+
 use chrono::Duration;
 use lazy_static::lazy_static;
 use regex::Regex;
-use serde_json::{Value};
-use serenity::prelude::*;
+use serde_json::Value;
 use serenity::model::prelude::*;
+use serenity::prelude::*;
 
 use serenity::{
-  client::Context,
-  framework::standard::CommandError,
-  model::interactions::application_command::ApplicationCommandInteraction,
-  utils::parse_mention,
+  client::Context, framework::standard::CommandError,
+  model::interactions::application_command::ApplicationCommandInteraction, model::mention::Mention,
 };
 
 #[macro_export]
 macro_rules! error {
   ($type:expr, $value:expr) => {
-    Err(Box::new(SerenityError::Url(format!("Could not find {} {}", $type, $value)))) 
+    Err(Box::new(SerenityError::Url(format!(
+      "Could not find {} {}",
+      $type, $value
+    ))))
   };
 }
 
@@ -28,7 +31,7 @@ macro_rules! command_err {
   };
 }
 
-lazy_static!{
+lazy_static! {
   /// https://unicode.org/reports/tr51/#EBNF_and_Regex
   pub static ref EMOJI_REGEX: Regex = Regex::new(r"(?x)
     <a?:[a-zA-Z0-9_]+:[0-9]+>|
@@ -101,51 +104,36 @@ pub fn format_duration(duration: &Duration) -> String {
   string
 }
 
-pub async fn get_guild(ctx: &Context, msg: &Message) 
-  -> Result<Guild, CommandError> {
-  match msg.guild(&ctx.cache).await {
+pub async fn get_guild(ctx: &Context, msg: &Message) -> Result<Guild, CommandError> {
+  match msg.guild(&ctx.cache) {
     Some(guild) => Ok(guild),
-    None => command_err!("Could not find guild")
+    None => command_err!("Could not find guild"),
   }
 }
 
-pub fn get_role_from_string(guild: &Guild, name_or_id: &str) 
-  -> Result<RoleId, CommandError> {
-    
-  match parse_mention(&name_or_id) {
-    Some(id) => {
-      let role_id = RoleId(id);
-      match guild.roles.get(&role_id) {
-        Some(_) => Ok(role_id),
-        None => error!("role", id)
-      }
-    }
-    None => {
-      match guild.role_by_name(&name_or_id) {
-        Some(role) => Ok(role.id),
-        None => error!("role", &name_or_id)
-      }
-    }
+pub fn get_role_from_string(guild: &Guild, name_or_id: &str) -> Result<RoleId, CommandError> {
+  match Mention::from_str(&name_or_id) {
+    Ok(mention) => match mention {
+      Mention::Role(role_id) => Ok(role_id),
+      _ => error!("role", mention),
+    },
+    Err(_error) => match guild.role_by_name(&name_or_id) {
+      Some(role) => Ok(role.id),
+      None => error!("role", &name_or_id),
+    },
   }
 }
 
-pub fn get_user_from_string(guild: &Guild,
-  name_or_id: &str) -> Result<UserId, CommandError> {
-
-  match parse_mention(&name_or_id) {
-    Some(id) => { 
-      let user_id = UserId(id);
-      match guild.members.get(&user_id) {
-        Some(_) => Ok(user_id),
-        None => error!("user", id)
-      }
-    }
-    None => {
-      match guild.member_named(&name_or_id) {
-        Some(member) => Ok(member.user.id),
-        None => error!("user", name_or_id)
-      }
-    }
+pub fn get_user_from_string(guild: &Guild, name_or_id: &str) -> Result<UserId, CommandError> {
+  match Mention::from_str(&name_or_id) {
+    Ok(mention) => match mention {
+      Mention::User(id) => Ok(id),
+      _ => error!("user", mention),
+    },
+    Err(_error) => match guild.member_named(&name_or_id) {
+      Some(member) => Ok(member.user.id),
+      None => error!("user", name_or_id),
+    },
   }
 }
 
@@ -163,8 +151,8 @@ pub fn get_str_or_error(op: &Option<Value>, fail_msg: &'static str) -> Result<St
   match op {
     Some(field) => match field.as_str() {
       Some(res) => Ok(String::from(res)),
-      None => Err(String::from(fail_msg))
+      None => Err(String::from(fail_msg)),
     },
-    None => Err(String::from(fail_msg))
+    None => Err(String::from(fail_msg)),
   }
 }

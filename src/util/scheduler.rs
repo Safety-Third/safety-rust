@@ -1,20 +1,20 @@
-use std::{io::{Error, ErrorKind::Other}, sync::Arc};
+use std::{
+  io::{Error, ErrorKind::Other},
+  sync::Arc,
+};
 
 use async_trait::async_trait;
 use redis::{
-  aio::Connection,
-  AsyncCommands, FromRedisValue,
-  RedisError, RedisResult, Value,
-  cmd, pipe
+  aio::Connection, cmd, pipe, AsyncCommands, FromRedisValue, RedisError, RedisResult, Value,
 };
 use serde::{Deserialize, Serialize};
 use serenity::{
   http::Http,
-  prelude::{TypeMapKey},
   model::{
     channel::ReactionType,
-    id::{ChannelId, UserId}
-  }
+    id::{ChannelId, UserId},
+  },
+  prelude::TypeMapKey,
 };
 use tokio::sync::Mutex;
 
@@ -22,28 +22,30 @@ use super::rng::random_id;
 
 macro_rules! redis_error {
   ($message:expr) => {
-      Err(RedisError::from(Error::new(Other, $message)))
+    Err(RedisError::from(Error::new(Other, $message)))
   };
 }
 
 // adapted from https://github.com/mitsuhiko/redis-rs/issues/353
 macro_rules! async_transaction {
   ($conn:expr, $keys:expr, $body:expr) => {
-      loop {
-          cmd("WATCH").arg($keys).query_async($conn).await?;
+    loop {
+      cmd("WATCH").arg($keys).query_async($conn).await?;
 
-          if let Some(response) = $body {
-              cmd("UNWATCH").query_async($conn).await?;
-              break response;
-          }
+      if let Some(response) = $body {
+        cmd("UNWATCH").query_async($conn).await?;
+        break response;
       }
+    }
   };
 }
 
+pub const MAX_OPTIONS: usize = 20;
+
 // adapted from https://github.com/stayingqold/Poll-Bot/blob/master/cogs/poll.py
 pub const EMOJI_ORDER: &[&str] = &[
-  "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟",
-  "🇦", "🇧", "🇨", "🇩", "🇪", "🇫", "🇬", "🇭", "🇮", "🇯"
+  "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟", "🇦", "🇧", "🇨", "🇩", "🇪", "🇫", "🇬", "🇭", "🇮",
+  "🇯",
 ];
 
 fn vote_str(count: usize) -> &'static str {
@@ -59,7 +61,7 @@ pub struct Poll {
   pub author: u64,
   pub channel: u64,
   pub message: u64,
-  pub topic: String
+  pub topic: String,
 }
 
 #[async_trait]
@@ -72,7 +74,10 @@ impl Callable<Arc<Http>> for Poll {
       Err(error) => {
         if let Ok(user) = UserId(self.author).to_user(http).await {
           let _ = user.dm(http, |m| {
-            m.content(&format!("Failed to conclude poll {}: {}", self.topic, error))
+            m.content(&format!(
+              "Failed to conclude poll {}: {}",
+              self.topic, error
+            ))
           });
         }
 
@@ -83,7 +88,6 @@ impl Callable<Arc<Http>> for Poll {
     if message.embeds.is_empty() {
       return;
     }
-    
 
     let mut options: Vec<&str> = vec![];
 
@@ -91,7 +95,7 @@ impl Callable<Arc<Http>> for Poll {
       for option in content.split('\n') {
         let index = match option.find('.') {
           Some(loc) => loc + 2,
-          None => 0
+          None => 0,
         };
 
         options.push(&option[index..]);
@@ -102,8 +106,7 @@ impl Callable<Arc<Http>> for Poll {
 
     for reaction in message.reactions.iter() {
       if let ReactionType::Unicode(emoji) = reaction.reaction_type.clone() {
-        let possible_idx = EMOJI_ORDER.iter()
-          .position(|e| *e == emoji);
+        let possible_idx = EMOJI_ORDER.iter().position(|e| *e == emoji);
 
         if let Some(idx) = possible_idx {
           if idx < options.len() {
@@ -131,22 +134,21 @@ impl Callable<Arc<Http>> for Poll {
 
     if wins.len() > 1 {
       let joined_str = wins.join(", ");
-      result_msg += &format!("**Tie between {}** ({} {} each)",
-        joined_str, &max_count, max_vote_msg);
+      result_msg += &format!(
+        "**Tie between {}** ({} {} each)",
+        joined_str, &max_count, max_vote_msg
+      );
     } else {
-      result_msg += &format!("**{}** wins! ({} {})",
-        wins[0], &max_count, max_vote_msg);
+      result_msg += &format!("**{}** wins! ({} {})", wins[0], &max_count, max_vote_msg);
     }
 
     if results.len() > wins.len() {
       result_msg += "\n\n>>> ";
       for item in &results[wins.len()..] {
         let vote_msg = vote_str(item.0);
-        result_msg += &format!("**{}** ({} {})\n",
-          item.1, item.0, vote_msg);
+        result_msg += &format!("**{}** ({} {})\n", item.1, item.0, vote_msg);
       }
     }
-
 
     let _ = channel_id.say(http, result_msg).await;
     let _ = message.edit(http, |m| m.components(|c| c)).await;
@@ -154,7 +156,7 @@ impl Callable<Arc<Http>> for Poll {
 }
 
 pub struct Scheduler {
-  connection: Connection
+  connection: Connection,
 }
 
 #[derive(Debug)]
@@ -165,18 +167,14 @@ pub struct MyVec {
 impl FromRedisValue for MyVec {
   fn from_redis_value(v: &Value) -> RedisResult<MyVec> {
     match *v {
-      Value::Data(ref bytes) => {
-        Ok(MyVec{
-          v: vec![bytes.to_owned()]
-        })
+      Value::Data(ref bytes) => Ok(MyVec {
+        v: vec![bytes.to_owned()],
+      }),
+      Value::Bulk(ref items) => match FromRedisValue::from_redis_values(items) {
+        Ok(vec) => Ok(MyVec { v: vec }),
+        Err(error) => redis_error!(error),
       },
-      Value::Bulk(ref items) => {
-        match FromRedisValue::from_redis_values(items) {
-          Ok(vec) => Ok(MyVec{v: vec}),
-          Err(error) => redis_error!(error)
-        }
-      }
-      Value::Nil => Ok(MyVec {v: vec![]}),
+      Value::Nil => Ok(MyVec { v: vec![] }),
       _ => redis_error!("Response type not vector compatible."),
     }
   }
@@ -202,7 +200,7 @@ impl Scheduler {
   pub async fn edit_job(&mut self, task: &Poll, id: &str, time: Option<i64>) -> RedisResult<()> {
     let task = match bincode::serialize(task) {
       Ok(serialized) => serialized,
-      Err(error) => return redis_error!(error)
+      Err(error) => return redis_error!(error),
     };
 
     let con = &mut self.connection;
@@ -211,17 +209,24 @@ impl Scheduler {
       let exists: u8 = con.hexists(JOBS_KEY, id).await?;
 
       if exists == 0 {
-        Some(Some(String::from("No job found for {}")))
+        Some(Some(String::from("No poll found with ID {}")))
       } else {
         if let Some(new_time) = time {
-          pipe().atomic()
-            .hset(JOBS_KEY, id, &task[..]).ignore()
-            .zadd(SCHEDULE_KEY, id, new_time).ignore()
-            .query_async(con).await?;
+          pipe()
+            .atomic()
+            .hset(JOBS_KEY, id, &task[..])
+            .ignore()
+            .zadd(SCHEDULE_KEY, id, new_time)
+            .ignore()
+            .query_async(con)
+            .await?;
         } else {
-          pipe().atomic()
-            .hset(JOBS_KEY, id, &task[..]).ignore()
-            .query_async(con).await?;
+          pipe()
+            .atomic()
+            .hset(JOBS_KEY, id, &task[..])
+            .ignore()
+            .query_async(con)
+            .await?;
         }
         Some(None)
       }
@@ -239,12 +244,12 @@ impl Scheduler {
 
     let task = match task {
       Some(evt) => evt,
-      None => return redis_error!(format!("No job found for {}", id))
+      None => return redis_error!(format!("No poll found with ID {}", id)),
     };
 
     match bincode::deserialize(&task) {
       Ok(result) => Ok(result),
-      Err(error) =>  redis_error!(error)
+      Err(error) => redis_error!(error),
     }
   }
 
@@ -257,11 +262,15 @@ impl Scheduler {
       if ready_jobs.is_empty() {
         Some(vec![])
       } else {
-        pipe().atomic()
+        pipe()
+          .atomic()
           .hget(JOBS_KEY, &ready_jobs[..])
-          .hdel(JOBS_KEY, &ready_jobs[..]).ignore()
-          .hdel(IDS_KEY, &ready_jobs[..]).ignore()
-          .zrembyscore(SCHEDULE_KEY, "-inf", timestamp).ignore()
+          .hdel(JOBS_KEY, &ready_jobs[..])
+          .ignore()
+          .hdel(IDS_KEY, &ready_jobs[..])
+          .ignore()
+          .zrembyscore(SCHEDULE_KEY, "-inf", timestamp)
+          .ignore()
           .query_async(con)
           .await?
       }
@@ -273,7 +282,7 @@ impl Scheduler {
       for job in my_vec.v.iter() {
         match bincode::deserialize(job) {
           Ok(result) => jobs_as_t.push(result),
-          Err(error) => return Err(RedisError::from(Error::new(Other, error)))
+          Err(error) => return Err(RedisError::from(Error::new(Other, error))),
         }
       }
     }
@@ -285,13 +294,13 @@ impl Scheduler {
     let con = &mut self.connection;
 
     let jobs_as_string: Vec<MyVec> = async_transaction!(con, &[JOBS_KEY, SCHEDULE_KEY], {
-      let ready_jobs: Vec<String> = con.zrangebyscore(
-        SCHEDULE_KEY, "-inf", timestamp).await?;
+      let ready_jobs: Vec<String> = con.zrangebyscore(SCHEDULE_KEY, "-inf", timestamp).await?;
 
       if ready_jobs.is_empty() {
         Some(vec![])
       } else {
-        pipe().atomic()
+        pipe()
+          .atomic()
           .hget(JOBS_KEY, ready_jobs)
           .query_async(con)
           .await?
@@ -304,7 +313,7 @@ impl Scheduler {
       for job in my_vec.v.iter() {
         match bincode::deserialize(job) {
           Ok(result) => jobs_as_t.push(result),
-          Err(error) => return Err(RedisError::from(Error::new(Other, error)))
+          Err(error) => return Err(RedisError::from(Error::new(Other, error))),
         }
       }
     }
@@ -314,31 +323,34 @@ impl Scheduler {
 
   pub async fn pop_job(&mut self, job_id: &String) -> RedisResult<Option<Poll>> {
     let con = &mut self.connection;
-    let (poll,): (Option<Vec<u8>>,) = async_transaction!(con, &[IDS_KEY, JOBS_KEY, SCHEDULE_KEY], {
-      let job_score: Option<i64> = con.zscore(SCHEDULE_KEY, &job_id).await?;
+    let (poll,): (Option<Vec<u8>>,) =
+      async_transaction!(con, &[IDS_KEY, JOBS_KEY, SCHEDULE_KEY], {
+        let job_score: Option<i64> = con.zscore(SCHEDULE_KEY, &job_id).await?;
 
-      match job_score {
-        None => Some((None,)),
-        Some(_) => {
-          pipe().atomic()
-            .hget(JOBS_KEY, &job_id)
-            .hdel(IDS_KEY, &job_id).ignore()
-            .hdel(JOBS_KEY, &job_id).ignore()
-            .zrem(SCHEDULE_KEY, &job_id).ignore()
-            .query_async(con)
-            .await?
+        match job_score {
+          None => Some((None,)),
+          Some(_) => {
+            pipe()
+              .atomic()
+              .hget(JOBS_KEY, &job_id)
+              .hdel(IDS_KEY, &job_id)
+              .ignore()
+              .hdel(JOBS_KEY, &job_id)
+              .ignore()
+              .zrem(SCHEDULE_KEY, &job_id)
+              .ignore()
+              .query_async(con)
+              .await?
+          }
         }
-      }
-    });
+      });
 
     match poll {
-      Some(existing) => {
-        match bincode::deserialize(&existing) {
-          Ok(result) => Ok(Some(result)),
-          Err(error) => Err(RedisError::from(Error::new(Other, error)))
-        }
+      Some(existing) => match bincode::deserialize(&existing) {
+        Ok(result) => Ok(Some(result)),
+        Err(error) => Err(RedisError::from(Error::new(Other, error))),
       },
-      None => Ok(None)
+      None => Ok(None),
     }
   }
 
@@ -350,7 +362,8 @@ impl Scheduler {
       match job_score {
         None => pipe().atomic().query_async(con).await?,
         Some(_) => {
-          pipe().atomic()
+          pipe()
+            .atomic()
             .hdel(IDS_KEY, &job_id)
             .hdel(JOBS_KEY, &job_id)
             .zrem(SCHEDULE_KEY, &job_id)
@@ -370,12 +383,13 @@ impl Scheduler {
     let _: () = async_transaction!(con, &[IDS_KEY], {
       loop {
         if !con.hexists(IDS_KEY, &new_id).await? {
-          break pipe().atomic()
-            .hset(IDS_KEY, &new_id, 0).ignore()
+          break pipe()
+            .atomic()
+            .hset(IDS_KEY, &new_id, 0)
+            .ignore()
             .query_async(con)
-            .await?
+            .await?;
         }
-  
         new_id = random_id();
       }
     });
@@ -383,17 +397,23 @@ impl Scheduler {
     Ok(new_id)
   }
 
-  pub async fn schedule_job(&mut self, task: &Poll, task_id: &String, timestamp: i64, duration: i64) ->  RedisResult<()>  {
+  pub async fn schedule_job(
+    &mut self,
+    task: &Poll,
+    task_id: &String,
+    timestamp: i64,
+    duration: i64,
+  ) -> RedisResult<()> {
     let message_id = task.message;
 
     let task = match bincode::serialize(task) {
       Ok(serialized) => serialized,
-      Err(error) => return redis_error!(error)
+      Err(error) => return redis_error!(error),
     };
-  
     let con = &mut self.connection;
 
-    pipe().atomic()
+    pipe()
+      .atomic()
       .zadd(SCHEDULE_KEY, task_id, timestamp)
       .hset(JOBS_KEY, task_id, &task[..])
       .set_ex(message_id, task_id, duration as usize)
