@@ -41,6 +41,7 @@ use tokio::{
 use commands::{
   news::*,
   nya::*,
+  owo::*,
   poll::*,
   roles::*,
   roll::*,
@@ -75,12 +76,14 @@ impl EventHandler for Handler {
   async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
     match interaction {
       Interaction::ApplicationCommand(app_command) => {
-        if let Err(error) = match app_command.data.name.as_str() {
+        let command_name = app_command.data.name.as_str();
+        if let Err(error) = match command_name {
           "nya" => interaction_nya(&ctx, &app_command).await,
+          "owo" => interaction_owo(&ctx, &app_command).await,
           "poll" => interaction_poll(&ctx, &app_command).await,
           "roll" => interaction_roll(&ctx, &app_command).await,
           "stats" => interaction_stats_entrypoint(&ctx, &app_command).await,
-          _ => Ok(()),
+          _ => Err(format!("No command {}", command_name)),
         } {
           let _ = app_command
             .create_interaction_response(ctx, |resp| {
@@ -660,8 +663,14 @@ async fn main() {
   {
     let http = Http::new_with_application_id(&token, app_id);
 
+    GuildId::set_application_commands(&GuildId(guild_id), &http, |commands| commands)
+      .await
+      .expect("Expected to create guild commands");
+
     ApplicationCommand::set_global_application_commands(&http, |commands| {
-      stats_commands(roll_command(poll_command(nya_command(commands))))
+      stats_commands(roll_command(poll_command(owo_command(nya_command(
+        commands,
+      )))))
     })
     .await
     .expect("Expected to clear application commands");

@@ -762,6 +762,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "owoify_rs"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60cff2350875a9ccee0655bc548b37bbb35cb1a95697e587a1e06639c08e677b"
+dependencies = [
+ "lazy_static",
+ "rand",
+ "regex",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1020,6 +1031,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "lazy_static",
+ "owoify_rs",
  "rand",
  "redis",
  "regex",
