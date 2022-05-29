@@ -10,6 +10,7 @@ bincode = "1.3"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.5"
 lazy_static = "1.4.0"
+linkify = "0.8"
 owoify_rs = "~1.0.0"
 rand = { version = "0.8", features = ["small_rng"] }
 redis = { version = "0.21.5", features = ["tokio-comp"] }
@@ -19,3 +20,4 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.64"
 serenity = { version = "0.11", features = ["collector", "utils"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+url = "2.2"

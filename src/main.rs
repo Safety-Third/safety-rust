@@ -28,7 +28,10 @@ use serenity::{
     channel::{Message, Reaction},
     gateway::{Activity, GatewayIntents},
     id::{ChannelId, GuildId, UserId},
-    interactions::{application_command::ApplicationCommand, Interaction, InteractionResponseType},
+    interactions::{
+      application_command::ApplicationCommand, Interaction,
+      InteractionApplicationCommandCallbackDataFlags, InteractionResponseType,
+    },
   },
   prelude::{Context, EventHandler},
 };
@@ -39,6 +42,7 @@ use tokio::{
 };
 
 use commands::{
+  link::*,
   news::*,
   nya::*,
   owo::*,
@@ -83,6 +87,7 @@ impl EventHandler for Handler {
           "poll" => interaction_poll(&ctx, &app_command).await,
           "roll" => interaction_roll(&ctx, &app_command).await,
           "stats" => interaction_stats_entrypoint(&ctx, &app_command).await,
+          "sanitize" => interaction_sanitize(&ctx, &app_command).await,
           _ => Err(format!("No command {}", command_name)),
         } {
           let _ = app_command
@@ -90,7 +95,9 @@ impl EventHandler for Handler {
               resp
                 .kind(InteractionResponseType::ChannelMessageWithSource)
                 .interaction_response_data(|msg| {
-                  msg.content(format!("An error occurred: {}", error))
+                  msg
+                    .content(format!("An error occurred: {}", error))
+                    .flags(InteractionApplicationCommandCallbackDataFlags::EPHEMERAL)
                 })
             })
             .await;
@@ -668,8 +675,8 @@ async fn main() {
       .expect("Expected to create guild commands");
 
     ApplicationCommand::set_global_application_commands(&http, |commands| {
-      stats_commands(roll_command(poll_command(owo_command(nya_command(
-        commands,
+      stats_commands(sanitize_command(roll_command(poll_command(owo_command(
+        nya_command(commands),
       )))))
     })
     .await

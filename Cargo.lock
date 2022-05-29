@@ -578,6 +578,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "349d5a591cd28b49e1d1037471617a32ddcda5731b99419008085f72d5a53836"
 
 [[package]]
+name = "linkify"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28d9967eb7d0bc31c39c6f52e8fce42991c0cd1f7a2078326f0b7a399a584c8d"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1031,6 +1040,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "lazy_static",
+ "linkify",
  "owoify_rs",
  "rand",
  "redis",
@@ -1040,6 +1050,7 @@ dependencies = [
  "serde_json",
  "serenity",
  "tokio",
+ "url",
 ]
 
 [[package]]
