@@ -150,7 +150,7 @@ impl Callable<Arc<Http>> for Poll {
       }
     }
 
-    let _ = channel_id.say(http, result_msg).await;
+    let _ = message.reply(http, result_msg).await;
     let _ = message.edit(http, |m| m.components(|c| c)).await;
   }
 }
