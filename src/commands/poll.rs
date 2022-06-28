@@ -35,7 +35,7 @@ pub fn poll_command(commands: &mut CreateApplicationCommands) -> &mut CreateAppl
           .create_sub_option(|time| time
             .name("time")
             .kind(ApplicationCommandOptionType::String)
-            .description("In the form XdXhXmXs (3d2h1m1s 3 day, 2 hour, 1 minute, 1 sec; 2m30s 2 minute, 30 second)")
+            .description("Time in the form 'X days, X hours, X minutes'. At least one of days, hours, or minutes required.")
             .required(true)
           );
 
@@ -507,6 +507,16 @@ pub async fn handle_poll_interaction(
   }
 }
 
+const TIMING_ERROR_STR: &str = "It looks like you provided the wrong time string.
+The accepted format is: `X days, X hours, X minutes`, where `X` is a non-negative number.
+You can provide any of the three times (e.g., `2 days, 1 minute`, `40 hours`), but must give **at least one**.
+Please note that **order does matter** (first days, then hours, then minutes).
+You can also write this string in shorthand! All spacing and commas are optional.
+In addition, there are shortcuts for each of the times, day, hour, and minute:
+> - `day`: d, ds, day, days
+> - `hour`: h, hr, hrs, hour, hours
+> - `minute`: m, min, mins, minute, minutes";
+
 /// Converts a potential "timing string" (day, hour, minute, second) to a Duration
 ///
 /// # Arguments
@@ -518,13 +528,16 @@ pub async fn handle_poll_interaction(
 /// - `Ok`: a duration representing the amount of time for the `timing` string
 fn parse_time(timing: &str) -> Result<Duration, &str> {
   lazy_static! {
-    static ref MIN_DURATION: Duration = Duration::seconds(30);
+    static ref MIN_DURATION: Duration = Duration::seconds(60);
+    static ref CHAR_REGEX: Regex = Regex::new(r"[a-zA-Z\s,]").unwrap();
     static ref RE: Regex = Regex::new(
       r"(?x)
-      (?P<days>\d+d)?
-      (?P<hours>\d+h)?
-      (?P<minutes>\d+m)?
-      (?P<seconds>\d+s)?$"
+      # Match any of the following: 1d, 2ds, 1 day, 2 days (spacing optional)
+      (?P<days>\d+ \s? +d (ay s?)?)? ,? \s*
+      # Match any of the following: 1h, 1 hr, 2 hrs, 1hour, 4 hours
+      (?P<hours>\d+ \s? (hour s? | hr s?| h))? ,? \s*
+      # Match any of the following: 1 m, 2 mins, 1 minute, 40minutes
+      (?P<minutes>\d+ \s? m (in (ute)? s?)?)?$"
     )
     .unwrap();
   }
@@ -535,50 +548,53 @@ fn parse_time(timing: &str) -> Result<Duration, &str> {
 
   let caps = match RE.captures(timing) {
     Some(captures) => captures,
-    None => return Err(
-      "Invalid format. Should be of the form `(\\d+d)?(\\d+h)?(\\d+m?)?` Or a number (for seconds",
-    ),
+    None => return Err(TIMING_ERROR_STR),
   };
 
   let mut duration = Duration::zero();
+  let mut passed = false;
 
   if let Some(days) = caps.name("days") {
-    let days_str = days.as_str();
+    let days_str = CHAR_REGEX.replace_all(&days.as_str(), "");
 
-    match days_str[..days_str.len() - 1].parse::<i64>() {
-      Ok(days_int) => duration = duration + Duration::days(days_int),
+    match days_str.parse::<i64>() {
+      Ok(days_int) => {
+        duration = duration + Duration::days(days_int);
+        passed = true;
+      }
       Err(_) => return Err("Must provide a numeric value for days"),
     }
   }
 
   if let Some(hours) = caps.name("hours") {
-    let hours_str = hours.as_str();
+    let hours_str = CHAR_REGEX.replace_all(&hours.as_str(), "");
 
-    match hours_str[..hours_str.len() - 1].parse::<i64>() {
-      Ok(hours_int) => duration = duration + Duration::hours(hours_int),
+    match hours_str.parse::<i64>() {
+      Ok(hours_int) => {
+        duration = duration + Duration::hours(hours_int);
+        passed = true;
+      }
       Err(_) => return Err("Must provide a numeric value for hours"),
     }
   }
 
   if let Some(minutes) = caps.name("minutes") {
-    match minutes.as_str().replace('m', "").parse::<i64>() {
-      Ok(minutes_int) => duration = duration + Duration::minutes(minutes_int),
+    let minutes_str = CHAR_REGEX.replace_all(&minutes.as_str(), "");
+
+    match minutes_str.parse::<i64>() {
+      Ok(minutes_int) => {
+        duration = duration + Duration::minutes(minutes_int);
+        passed = true;
+      }
       Err(_) => return Err("Must provide a numeric value for minutes"),
     }
   }
 
-  if let Some(seconds) = caps.name("seconds") {
-    let seconds_str = seconds.as_str();
-
-    match seconds_str[..seconds_str.len() - 1].parse::<i64>() {
-      Ok(seconds_int) => duration = duration + Duration::seconds(seconds_int),
-      Err(_) => return Err("Must provide a numeric value for seconds"),
-    }
+  if !passed {
+    Err(TIMING_ERROR_STR)
+  } else if duration < *MIN_DURATION {
+    Err("Poll must be at least 1 minute")
+  } else {
+    Ok(duration)
   }
-
-  if duration < *MIN_DURATION {
-    return Err("Poll must be at least 30 seconds");
-  }
-
-  Ok(duration)
 }

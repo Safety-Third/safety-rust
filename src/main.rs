@@ -502,7 +502,7 @@ async fn main() {
     let lock = redis_scheduler_arc.clone();
 
     spawn(async move {
-      let mut interval = interval(Duration::from_secs(5));
+      let mut interval = interval(Duration::from_secs(30));
 
       loop {
         let jobs = {
