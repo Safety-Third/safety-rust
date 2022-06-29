@@ -37,6 +37,12 @@ pub fn poll_command(commands: &mut CreateApplicationCommands) -> &mut CreateAppl
             .kind(ApplicationCommandOptionType::String)
             .description("Time in the form 'X days, X hours, X minutes'. At least one of days, hours, or minutes required.")
             .required(true)
+          )
+          .create_sub_option(|allow_others| allow_others
+            .name("allow_others_to_add_options")
+            .kind(ApplicationCommandOptionType::Boolean)
+            .description("Whether to allow other users in the same channel to add options to this poll")
+            .required(true)
           );
 
         for idx in 1..=MAX_OPTIONS {
@@ -47,6 +53,7 @@ pub fn poll_command(commands: &mut CreateApplicationCommands) -> &mut CreateAppl
             .required(idx < 3)
           );
         }
+        
 
         new
       })
@@ -74,6 +81,8 @@ pub fn poll_command(commands: &mut CreateApplicationCommands) -> &mut CreateAppl
       })
   )
 }
+
+const BOOL_FAIL_MESSAGE: &str = "You must say whether others are allowed to add to this poll or not";
 
 pub async fn interaction_poll(
   ctx: &Context,
@@ -119,7 +128,15 @@ async fn new_poll(
   let mut options: Vec<String> = vec![];
   let mut existing: HashSet<String> = HashSet::new();
 
-  for option in &data_options[2..] {
+  let allow_others = match &data_options[2].value {
+    Some(field) => match field.as_bool() {
+      Some(boolean) => boolean,
+      None => return Err(String::from(BOOL_FAIL_MESSAGE))
+    },
+    None => return Err(String::from(BOOL_FAIL_MESSAGE))
+  };
+
+  for option in &data_options[3..] {
     if let Some(op) = &option.value {
       if let Some(op_str) = op.as_str() {
         let new_option = String::from(op_str.trim());
@@ -186,6 +203,10 @@ async fn new_poll(
                 .field("duration", format_duration(&duration), true)
                 .field("poll id", &poll_id, true)
                 .field("ends at", time_str, false)
+                .field("Others can edit", match allow_others {
+                  true => "Yes",
+                  false => "No"
+                }, false)
                 .description(description)
             })
             .components(|comp| {
@@ -225,6 +246,7 @@ async fn new_poll(
     author: author_id,
     channel: channel.0,
     message: message.id.0,
+    others: allow_others,
     topic: topic_str,
   };
 
@@ -286,9 +308,14 @@ async fn option_add(
     }
   };
 
-  if poll.author != interaction.user.id.0 {
+  if poll.others {
+    if poll.channel != interaction.channel_id.0 {
+      return Err(String::from("You must be in the same channel to add an option to a poll"));
+    }
+  } else if poll.author != interaction.user.id.0 {
     return Err(String::from("Only the creator of a poll can edit it"));
   }
+
   let mut message: Message = match ChannelId(poll.channel)
     .message(&ctx.http, poll.message)
     .await

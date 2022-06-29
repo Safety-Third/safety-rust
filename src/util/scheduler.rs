@@ -61,6 +61,7 @@ pub struct Poll {
   pub author: u64,
   pub channel: u64,
   pub message: u64,
+  pub others: bool,
   pub topic: String,
 }
 
