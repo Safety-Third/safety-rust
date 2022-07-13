@@ -28,10 +28,7 @@ use serenity::{
     channel::{Message, Reaction},
     gateway::{Activity, GatewayIntents},
     id::{ChannelId, GuildId, UserId},
-    interactions::{
-      application_command::ApplicationCommand, Interaction,
-      InteractionApplicationCommandCallbackDataFlags, InteractionResponseType,
-    },
+    interactions::{application_command::ApplicationCommand, Interaction, InteractionResponseType},
   },
   prelude::{Context, EventHandler},
 };
@@ -82,6 +79,7 @@ impl EventHandler for Handler {
       Interaction::ApplicationCommand(app_command) => {
         let command_name = app_command.data.name.as_str();
         if let Err(error) = match command_name {
+          "briefing" => interaction_briefing(&ctx, &app_command).await,
           "nya" => interaction_nya(&ctx, &app_command).await,
           "owo" => interaction_owo(&ctx, &app_command).await,
           "poll" => interaction_poll(&ctx, &app_command).await,
@@ -97,7 +95,25 @@ impl EventHandler for Handler {
                 .interaction_response_data(|msg| {
                   msg
                     .content(format!("An error occurred: {}", error))
-                    .flags(InteractionApplicationCommandCallbackDataFlags::EPHEMERAL)
+                    .ephemeral(true)
+                })
+            })
+            .await;
+        }
+      }
+      Interaction::ModalSubmit(submit) => {
+        if let Err(error) = match submit.data.custom_id.as_str() {
+          "briefing" => interaction_briefing_followup(&ctx, &submit).await,
+          _ => Err(format!("No modal {}", submit.data.custom_id)),
+        } {
+          let _ = submit
+            .create_interaction_response(ctx, |resp| {
+              resp
+                .kind(InteractionResponseType::ChannelMessageWithSource)
+                .interaction_response_data(|msg| {
+                  msg
+                    .content(format!("An error occurred: {}", error))
+                    .ephemeral(true)
                 })
             })
             .await;
@@ -670,7 +686,7 @@ async fn main() {
   {
     let http = Http::new_with_application_id(&token, app_id);
 
-    GuildId::set_application_commands(&GuildId(guild_id), &http, |commands| commands)
+    GuildId::set_application_commands(&GuildId(guild_id), &http, |commands| news_command(commands))
       .await
       .expect("Expected to create guild commands");
 

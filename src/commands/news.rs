@@ -6,9 +6,17 @@ use chrono_tz::EST5EDT;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use serenity::{
+  builder::CreateApplicationCommands,
   framework::standard::{macros::command, Args, CommandResult},
   http::Http,
-  model::prelude::*,
+  model::{
+    interactions::{
+      application_command::ApplicationCommandInteraction,
+      message_component::{ActionRowComponent, InputTextStyle},
+      modal::ModalSubmitInteraction,
+    },
+    prelude::*,
+  },
   prelude::*,
 };
 
@@ -28,6 +36,146 @@ impl TypeMapKey for BriefingGuildKey {
 pub const BRIEFING_REPLIES: &[&str] = &["✅", "❌"];
 
 pub const BRIEFING_KEY: &str = "safety:briefings";
+
+pub fn news_command(commands: &mut CreateApplicationCommands) -> &mut CreateApplicationCommands {
+  commands
+    .create_application_command(|command| command.name("briefing").description("Start a briefing"))
+}
+
+pub async fn interaction_briefing(
+  ctx: &Context,
+  interaction: &ApplicationCommandInteraction,
+) -> Result<(), String> {
+  let _ = interaction
+    .create_interaction_response(ctx, |response| {
+      response
+        .kind(InteractionResponseType::Modal)
+        .interaction_response_data(|msg| {
+          msg
+            .ephemeral(true)
+            .title("Create a new briefing")
+            .custom_id("briefing")
+            .components(|comp| {
+              comp
+                .create_action_row(|row| {
+                  row.create_input_text(|text| {
+                    text
+                      .custom_id("title")
+                      .label("Your briefing header!")
+                      .placeholder("Something newsworthy *dootdootdootdoot*")
+                      .required(true)
+                      .style(InputTextStyle::Short)
+                  })
+                })
+                .create_action_row(|row| {
+                  row.create_input_text(|text| {
+                    text
+                      .custom_id("content")
+                      .label("Give us all the deets")
+                      .placeholder("Our house, in the middle of our horse...")
+                      .required(true)
+                      .style(InputTextStyle::Paragraph)
+                  })
+                })
+            })
+        })
+    })
+    .await;
+
+  Ok(())
+}
+
+pub async fn interaction_briefing_followup(
+  ctx: &Context,
+  modal: &ModalSubmitInteraction,
+) -> Result<(), String> {
+  let mut heading: Option<String> = None;
+  let mut body: Option<String> = None;
+
+  for row in &modal.data.components {
+    for component in &row.components {
+      if let ActionRowComponent::InputText(text) = component {
+        if text.custom_id == "title" {
+          heading = Some(text.value.clone());
+        } else if text.custom_id == "content" {
+          body = Some(text.value.clone());
+        }
+      }
+    }
+  }
+
+  if heading == None || body == None {
+    return Err(String::from("You must provide a heading and body"));
+  }
+
+  let guild_id = {
+    ctx
+      .data
+      .read()
+      .await
+      .get::<BriefingGuildKey>()
+      .expect("Expected guild id")
+      .clone()
+  };
+
+  match Guild::get(&ctx, guild_id).await {
+    Ok(guild) => {
+      if let Err(_) = guild.member(&ctx, modal.user.id).await {
+        return Err(String::from("You are not approved"));
+      }
+    }
+    Err(error) => return Err(error.to_string()),
+  }
+
+  let now = Utc::now().with_timezone(&EST5EDT);
+
+  let briefing = Briefing {
+    author: modal.user.mention().to_string(),
+    heading: heading.unwrap().to_string(),
+    body: body,
+    time: now.format("%A %B %-d, %Y %-I:%M %P").to_string(),
+  };
+
+  let serialized = match bincode::serialize(&briefing) {
+    Ok(data) => data,
+    Err(_) => {
+      return Err(String::from(
+        "Could not serialize your briefing. Please but bot manager",
+      ));
+    }
+  };
+
+  let result = {
+    let lock = {
+      let mut context = ctx.data.write().await;
+      context
+        .get_mut::<RedisConnectionKey>()
+        .expect("Expected redis connection")
+        .clone()
+    };
+
+    let mut redis_client = lock.lock().await;
+    redis_client
+      .0
+      .zadd::<&str, i64, Vec<u8>, u64>(BRIEFING_KEY, serialized, now.timestamp())
+      .await
+  };
+
+  match result {
+    Ok(_) => {
+      let _ = modal
+        .create_interaction_response(ctx, |resp| {
+          resp
+            .kind(InteractionResponseType::ChannelMessageWithSource)
+            .interaction_response_data(|msg| msg.content("Submitted").ephemeral(true))
+        })
+        .await;
+    }
+    Err(error) => return Err(format!("Could not save your briefing: {:?}", error)),
+  };
+
+  Ok(())
+}
 
 #[command]
 #[only_in("dms")]
