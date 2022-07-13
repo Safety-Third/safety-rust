@@ -39,6 +39,7 @@ use tokio::{
 };
 
 use commands::{
+  help::*,
   link::*,
   news::*,
   nya::*,
@@ -80,6 +81,7 @@ impl EventHandler for Handler {
         let command_name = app_command.data.name.as_str();
         if let Err(error) = match command_name {
           "briefing" => interaction_briefing(&ctx, &app_command).await,
+          "help" => interaction_help(&ctx, &app_command).await,
           "nya" => interaction_nya(&ctx, &app_command).await,
           "owo" => interaction_owo(&ctx, &app_command).await,
           "poll" => interaction_poll(&ctx, &app_command).await,
@@ -692,7 +694,7 @@ async fn main() {
 
     ApplicationCommand::set_global_application_commands(&http, |commands| {
       stats_commands(sanitize_command(roll_command(poll_command(owo_command(
-        nya_command(news_command(commands)),
+        nya_command(news_command(help_command(commands))),
       )))))
     })
     .await

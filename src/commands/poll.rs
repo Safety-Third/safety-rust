@@ -43,6 +43,12 @@ pub fn poll_command(commands: &mut CreateApplicationCommands) -> &mut CreateAppl
             .kind(ApplicationCommandOptionType::Boolean)
             .description("Whether to allow other users in the same channel to add options to this poll")
             .required(true)
+          )
+          .create_sub_option(|allow_others| allow_others
+            .name("pin")
+            .kind(ApplicationCommandOptionType::Boolean)
+            .description("Whether to pin this poll")
+            .required(true)
           );
 
         for idx in 1..=MAX_OPTIONS {
@@ -136,7 +142,15 @@ async fn new_poll(
     None => return Err(String::from(BOOL_FAIL_MESSAGE))
   };
 
-  for option in &data_options[3..] {
+  let pin = match &data_options[3].value {
+    Some(field) => match field.as_bool() {
+      Some(boolean) => boolean,
+      None => return Err(String::from(BOOL_FAIL_MESSAGE))
+    },
+    None => return Err(String::from(BOOL_FAIL_MESSAGE))
+  };
+
+  for option in &data_options[4..] {
     if let Some(op) = &option.value {
       if let Some(op_str) = op.as_str() {
         let new_option = String::from(op_str.trim());
@@ -237,6 +251,10 @@ async fn new_poll(
     Ok(msg) => msg,
     Err(error) => return Err(error.to_string()),
   };
+
+  if pin {
+    let _ = message.pin(&ctx).await;
+  }
 
   for react in reactions {
     let _ = message.react(ctx, react).await;

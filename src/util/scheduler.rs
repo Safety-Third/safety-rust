@@ -151,6 +151,10 @@ impl Callable<Arc<Http>> for Poll {
       }
     }
 
+    if message.pinned {
+      let _ = message.unpin(http).await;
+    }
+
     let _ = message.reply(http, result_msg).await;
     let _ = message.edit(http, |m| m.components(|c| c)).await;
   }
