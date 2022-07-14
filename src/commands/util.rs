@@ -1,17 +1,13 @@
 #![macro_use]
 
-use std::str::FromStr;
-
 use chrono::Duration;
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde_json::Value;
 use serenity::model::prelude::*;
-use serenity::prelude::*;
 
 use serenity::{
-  client::Context, framework::standard::CommandError,
-  model::interactions::application_command::ApplicationCommandInteraction, model::mention::Mention,
+  client::Context, model::interactions::application_command::ApplicationCommandInteraction,
 };
 
 #[macro_export]
@@ -21,13 +17,6 @@ macro_rules! error {
       "Could not find {} {}",
       $type, $value
     ))))
-  };
-}
-
-#[macro_export]
-macro_rules! command_err {
-  ($string:expr) => {
-    Err(Box::new(SerenityError::Url(String::from($string))))
   };
 }
 
@@ -104,36 +93,10 @@ pub fn format_duration(duration: &Duration) -> String {
   string
 }
 
-pub async fn get_guild(ctx: &Context, msg: &Message) -> Result<Guild, CommandError> {
+pub async fn get_guild(ctx: &Context, msg: &Message) -> Result<Guild, String> {
   match msg.guild(&ctx.cache) {
     Some(guild) => Ok(guild),
-    None => command_err!("Could not find guild"),
-  }
-}
-
-pub fn get_role_from_string(guild: &Guild, name_or_id: &str) -> Result<RoleId, CommandError> {
-  match Mention::from_str(&name_or_id) {
-    Ok(mention) => match mention {
-      Mention::Role(role_id) => Ok(role_id),
-      _ => error!("role", mention),
-    },
-    Err(_error) => match guild.role_by_name(&name_or_id) {
-      Some(role) => Ok(role.id),
-      None => error!("role", &name_or_id),
-    },
-  }
-}
-
-pub fn get_user_from_string(guild: &Guild, name_or_id: &str) -> Result<UserId, CommandError> {
-  match Mention::from_str(&name_or_id) {
-    Ok(mention) => match mention {
-      Mention::User(id) => Ok(id),
-      _ => error!("user", mention),
-    },
-    Err(_error) => match guild.member_named(&name_or_id) {
-      Some(member) => Ok(member.user.id),
-      None => error!("user", name_or_id),
-    },
+    None => Err(String::from("Could not find guild")),
   }
 }
 

@@ -2,7 +2,7 @@ mod commands;
 mod util;
 
 use std::{
-  collections::{HashMap, HashSet},
+  collections::HashMap,
   env::var,
   ops::{Add, Sub},
   sync::{
@@ -18,16 +18,11 @@ use redis::{AsyncCommands, Client, RedisResult};
 use serenity::{
   async_trait,
   client::Client as DiscordClient,
-  framework::standard::{
-    help_commands,
-    macros::{group, help, hook},
-    Args, CommandGroup, CommandResult, Delimiter, DispatchError, HelpOptions, StandardFramework,
-  },
   http::Http,
   model::{
     channel::{Message, Reaction},
     gateway::{Activity, GatewayIntents},
-    id::{ChannelId, GuildId, UserId},
+    id::{ChannelId, GuildId},
     interactions::{application_command::ApplicationCommand, Interaction, InteractionResponseType},
   },
   prelude::{Context, EventHandler},
@@ -45,7 +40,6 @@ use commands::{
   nya::*,
   owo::*,
   poll::*,
-  roles::*,
   roll::*,
   stats::*,
   util::{get_guild, EMOJI_REGEX},
@@ -59,15 +53,6 @@ use util::{
   },
   sheets::{parse_date, query},
 };
-
-#[group]
-#[commands(briefing)]
-struct General;
-
-#[group]
-#[commands(add_roles, remove_roles, set_roles)]
-#[description = "Commands for managing roles (admin-only)"]
-struct Roles;
 
 struct Handler {
   loop_running: AtomicBool,
@@ -363,62 +348,6 @@ impl EventHandler for Handler {
   }
 }
 
-#[help]
-#[individual_command_tip = "Welcome to Bot v3.\n\
-For help on a specific command, just pass that name in.
-To see this in embed form, pass `embed` as your first option (e.g. `help embed other_stuff`)"]
-#[command_not_found_text = "Could not find: `{}`."]
-#[max_levenshtein_distance(3)]
-#[lacking_permissions = "Hide"]
-#[lacking_role = "Nothing"]
-#[wrong_channel = "Strike"]
-async fn my_help(
-  context: &Context,
-  msg: &Message,
-  args: Args,
-  help_options: &'static HelpOptions,
-  groups: &[&'static CommandGroup],
-  owners: HashSet<UserId>,
-) -> CommandResult {
-  let embed = args.current() == Some("embed");
-
-  if embed {
-    let message = args.message();
-    let len_to_remove = std::cmp::min(6, message.len());
-
-    let remaining_args = Args::new(&message[len_to_remove..], &[Delimiter::Single(' ')]);
-    help_commands::with_embeds(context, msg, remaining_args, help_options, groups, owners).await;
-  } else {
-    help_commands::plain(context, msg, args, help_options, groups, owners).await;
-  }
-  Ok(())
-}
-
-#[hook]
-async fn after(ctx: &Context, msg: &Message, _name: &str, result: CommandResult) {
-  if !msg.author.bot {
-    if let Err(error) = result {
-      let _ = msg
-        .channel_id
-        .say(
-          &ctx.http,
-          &format!("Error in {:?}:\n{}", msg.content, error),
-        )
-        .await;
-    }
-  }
-}
-
-#[hook]
-async fn dispatch_error(ctx: &Context, msg: &Message, error: DispatchError, command_name: &str) {
-  if !msg.author.bot {
-    let _ = msg
-      .channel_id
-      .say(ctx, &format!("Error in {:?}:\n{:?}", msg.content, error))
-      .await;
-  }
-}
-
 #[tokio::main(flavor = "multi_thread", worker_threads = 12)]
 async fn main() {
   let api_key = var("GOOGLE_API_KEY").expect("Expected Google API key");
@@ -448,22 +377,6 @@ async fn main() {
 
   let http = Http::new_with_application_id(&token, app_id);
 
-  let owners = {
-    match http.get_current_application_info().await {
-      Ok(info) => {
-        let mut owners = HashSet::new();
-        if let Some(team) = info.team {
-          owners.insert(team.owner_user_id);
-        } else {
-          owners.insert(info.owner.id);
-        }
-
-        owners
-      }
-      Err(why) => panic!("Could not access application info: {:?}", why),
-    }
-  };
-
   let intents = GatewayIntents::DIRECT_MESSAGES
     | GatewayIntents::DIRECT_MESSAGE_REACTIONS
     | GatewayIntents::GUILDS
@@ -476,15 +389,6 @@ async fn main() {
       loop_running: AtomicBool::new(false),
     })
     .application_id(app_id)
-    .framework(
-      StandardFramework::new()
-        .configure(|c| c.owners(owners).prefixes(vec![">", "~"]))
-        .help(&MY_HELP)
-        .group(&GENERAL_GROUP)
-        .group(&ROLES_GROUP)
-        .after(after)
-        .on_dispatch_error(dispatch_error),
-    )
     .await
     .expect("Error creating client");
 
