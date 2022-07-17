@@ -68,9 +68,11 @@ pub async fn interaction_briefing(
                   row.create_input_text(|text| {
                     text
                       .custom_id("content")
-                      .label("Give us all the deets")
-                      .placeholder("Our house, in the middle of our horse...")
-                      .required(true)
+                      .label("Give us all the deets (or don't; that's fine too)")
+                      .placeholder(
+                        "(This is optional, if you don't want to provide additional memes)",
+                      )
+                      .required(false)
                       .style(InputTextStyle::Paragraph)
                   })
                 })
@@ -101,8 +103,8 @@ pub async fn interaction_briefing_followup(
     }
   }
 
-  if heading == None || body == None {
-    return Err(String::from("You must provide a heading and body"));
+  if heading == None {
+    return Err(String::from("You must provide a heading"));
   }
 
   let guild_id = {
@@ -180,8 +182,7 @@ pub async fn send_briefing(
   http: &Arc<Http>,
 ) -> Result<(), String> {
   let mut messages: Vec<String> = vec![];
-  let mut current_message =
-    String::from("*DOOTDOOTDOOTDOOT*. It's time for your Safety Weekly Briefing!\n\n");
+  let mut current_message = String::from("");
 
   for briefing in &briefings.v {
     let brief: Briefing = match bincode::deserialize(&briefing) {
@@ -208,11 +209,18 @@ pub async fn send_briefing(
     }
   }
 
+  let header = String::from("*DOOTDOOTDOOTDOOT*. It's time for your Safety Weekly Briefing!");
+
   messages.push(current_message);
   let channel = ChannelId(channel_id);
 
   for message in messages {
-    if let Err(error) = channel.say(http, &message).await {
+    if let Err(error) = channel
+      .send_message(http, |m| {
+        m.embed(|e| e.title(header.clone()).description(message))
+      })
+      .await
+    {
       return Err(format!("Could not send briefing: {:?}", error));
     }
   }
