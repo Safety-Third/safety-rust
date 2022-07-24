@@ -62,18 +62,18 @@ pub async fn interaction_briefing(
                       .placeholder("Something newsworthy *dootdootdootdoot*")
                       .required(true)
                       .style(InputTextStyle::Short)
+                      .max_length(100)
                   })
                 })
                 .create_action_row(|row| {
                   row.create_input_text(|text| {
                     text
                       .custom_id("content")
-                      .label("Give us all the deets (or don't; that's fine too)")
-                      .placeholder(
-                        "(This is optional, if you don't want to provide additional memes)",
-                      )
+                      .label("Give us the deets (or don't; that's ok too)")
+                      .placeholder("(This is optional)")
                       .required(false)
                       .style(InputTextStyle::Paragraph)
+                      .max_length(3800)
                   })
                 })
             })
