@@ -8,4 +8,3 @@ pub mod nya;
 pub mod owo;
 pub mod poll;
 pub mod roll;
-pub mod stats;

@@ -1,14 +1,10 @@
 #![macro_use]
 
 use chrono::Duration;
-use lazy_static::lazy_static;
-use regex::Regex;
 use serde_json::Value;
 use serenity::model::prelude::*;
 
-use serenity::{
-  client::Context, model::interactions::application_command::ApplicationCommandInteraction,
-};
+use serenity::model::interactions::application_command::ApplicationCommandInteraction;
 
 #[macro_export]
 macro_rules! error {
@@ -18,23 +14,6 @@ macro_rules! error {
       $type, $value
     ))))
   };
-}
-
-lazy_static! {
-  /// https://unicode.org/reports/tr51/#EBNF_and_Regex
-  pub static ref EMOJI_REGEX: Regex = Regex::new(r"(?x)
-    <a?:[a-zA-Z0-9_]+:[0-9]+>|
-    \p{RI}\p{RI}|
-    \p{Emoji} 
-      ( \p{EMod} 
-      | \x{FE0F} \x{20E3}? 
-      | [\x{E0020}-\x{E007E}]+ \x{E007F} )?
-      (\x{200D} \p{Emoji}
-        ( \p{EMod} 
-        | \x{FE0F} \x{20E3}? 
-        | [\x{E0020}-\x{E007E}]+ \x{E007F} )?
-      )*"
-    ).unwrap();
 }
 
 #[inline]
@@ -91,13 +70,6 @@ pub fn format_duration(duration: &Duration) -> String {
   }
 
   string
-}
-
-pub async fn get_guild(ctx: &Context, msg: &Message) -> Result<Guild, String> {
-  match msg.guild(&ctx.cache) {
-    Some(guild) => Ok(guild),
-    None => Err(String::from("Could not find guild")),
-  }
 }
 
 #[inline]

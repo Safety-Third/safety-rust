@@ -2,7 +2,6 @@ mod commands;
 mod util;
 
 use std::{
-  collections::HashMap,
   env::var,
   ops::{Add, Sub},
   sync::{
@@ -14,13 +13,12 @@ use std::{
 
 use chrono::{Datelike, Duration as ChronoDuration, Timelike, Utc};
 use chrono_tz::EST5EDT;
-use redis::{AsyncCommands, Client, RedisResult};
+use redis::{AsyncCommands, Client};
 use serenity::{
   async_trait,
   client::Client as DiscordClient,
   http::Http,
   model::{
-    channel::{Message, Reaction},
     gateway::{Activity, GatewayIntents},
     id::{ChannelId, GuildId},
     interactions::{application_command::ApplicationCommand, Interaction, InteractionResponseType},
@@ -33,17 +31,7 @@ use tokio::{
   time::{interval, sleep},
 };
 
-use commands::{
-  help::*,
-  link::*,
-  news::*,
-  nya::*,
-  owo::*,
-  poll::*,
-  roll::*,
-  stats::*,
-  util::{get_guild, EMOJI_REGEX},
-};
+use commands::{help::*, link::*, news::*, nya::*, owo::*, poll::*, roll::*};
 
 use util::{
   rng::random_number,
@@ -71,7 +59,6 @@ impl EventHandler for Handler {
           "owo" => interaction_owo(&ctx, &app_command).await,
           "poll" => interaction_poll(&ctx, &app_command).await,
           "roll" => interaction_roll(&ctx, &app_command).await,
-          "stats" => interaction_stats_entrypoint(&ctx, &app_command).await,
           "sanitize" => interaction_sanitize(&ctx, &app_command).await,
           _ => Err(format!("No command {}", command_name)),
         } {
@@ -128,194 +115,6 @@ impl EventHandler for Handler {
       }
       _ => {}
     }
-  }
-
-  async fn message(&self, ctx: Context, msg: Message) {
-    if msg.author.bot {
-      return;
-    }
-
-    let id = match msg.guild_id {
-      Some(i) => i.0,
-      None => match get_guild(&ctx, &msg).await {
-        Ok(guild) => guild.id.0,
-        Err(_) => return,
-      },
-    };
-
-    let key = format!("{}:{}", msg.author.id.0, id);
-
-    let lock = {
-      let mut context = ctx.data.write().await;
-      context
-        .get_mut::<RedisConnectionKey>()
-        .expect("Expected redis instance")
-        .clone()
-    };
-
-    let mut data: HashMap<String, u64> = {
-      let mut redis_client = lock.lock().await;
-      match redis_client.0.hgetall(&key).await {
-        Ok(result) => result,
-        Err(_) => HashMap::new(),
-      }
-    };
-
-    if data.get("consent") != Some(&1) {
-      return;
-    }
-
-    for mat in EMOJI_REGEX.find_iter(&msg.content) {
-      if mat.end() > mat.start() + 1 {
-        let key = &msg.content[mat.range()];
-        let new_value = match data.get(key) {
-          Some(existing) => existing + 1,
-          None => 1,
-        };
-
-        data.insert(key.to_owned(), new_value);
-      }
-    }
-
-    let mut items: Vec<(String, u64)> = vec![];
-
-    for (key, val) in data.into_iter() {
-      items.push((key, val));
-    }
-
-    {
-      let mut redis_client = lock.lock().await;
-      let res: RedisResult<String> = redis_client.0.hset_multiple(key, &items).await;
-      if let Err(error) = res {
-        println!("{:?}", error);
-      }
-    }
-  }
-
-  async fn reaction_add(&self, ctx: Context, reaction: Reaction) {
-    let guild_id = match reaction.guild_id {
-      Some(id) => id,
-      None => return,
-    };
-
-    let user = match reaction.user(&ctx.http).await {
-      Ok(u) => u,
-      Err(_) => return,
-    };
-
-    if user.bot {
-      return;
-    }
-
-    let user_id = match reaction.user_id {
-      Some(id) => id,
-      None => return,
-    };
-
-    let key = format!("{}:{}", user_id.0, guild_id);
-
-    let lock = {
-      let mut context = ctx.data.write().await;
-      context
-        .get_mut::<RedisConnectionKey>()
-        .expect("Expected redis instance")
-        .clone()
-    };
-
-    let data: HashMap<String, u64> = {
-      let mut redis_client = lock.lock().await;
-
-      match redis_client.0.hgetall(&key).await {
-        Ok(result) => result,
-        Err(_) => HashMap::new(),
-      }
-    };
-
-    if data.get("consent") != Some(&1) {
-      return;
-    }
-
-    let emoji_str = format!("{}", reaction.emoji);
-
-    let new_data = match data.get(&emoji_str) {
-      Some(old) => old + 1,
-      None => 1,
-    };
-
-    {
-      let mut redis_client = lock.lock().await;
-      let res: RedisResult<u64> = redis_client.0.hset(&key, emoji_str, new_data).await;
-
-      if let Err(error) = res {
-        println!("{:?}", error);
-      }
-    };
-  }
-
-  async fn reaction_remove(&self, ctx: Context, reaction: Reaction) {
-    let guild_id = match reaction.guild_id {
-      Some(id) => id,
-      None => return,
-    };
-
-    let user = match reaction.user(&ctx.http).await {
-      Ok(u) => u,
-      Err(_) => return,
-    };
-
-    if user.bot {
-      return;
-    }
-
-    let user_id = match reaction.user_id {
-      Some(id) => id,
-      None => return,
-    };
-
-    let key = format!("{}:{}", user_id.0, guild_id);
-
-    let lock = {
-      let mut context = ctx.data.write().await;
-      context
-        .get_mut::<RedisConnectionKey>()
-        .expect("Expected redis instance")
-        .clone()
-    };
-
-    let data: HashMap<String, u64> = {
-      let mut redis_client = lock.lock().await;
-      match redis_client.0.hgetall(&key).await {
-        Ok(result) => result,
-        Err(_) => HashMap::new(),
-      }
-    };
-
-    if data.get("consent") != Some(&1) {
-      return;
-    }
-
-    let emoji_str = format!("{}", reaction.emoji);
-
-    let new_data = match data.get(&emoji_str) {
-      Some(old) => old - 1,
-      None => 0,
-    };
-
-    {
-      let mut redis_client = lock.lock().await;
-
-      let res: RedisResult<u64> = {
-        if new_data != 0 {
-          redis_client.0.hset(&key, emoji_str, new_data).await
-        } else {
-          redis_client.0.hdel(&key, emoji_str).await
-        }
-      };
-
-      if let Err(error) = res {
-        println!("{:?}", error);
-      }
-    };
   }
 
   async fn cache_ready(&self, ctx: Context, _guilds: Vec<GuildId>) {
@@ -377,12 +176,7 @@ async fn main() {
 
   let http = Http::new_with_application_id(&token, app_id);
 
-  let intents = GatewayIntents::DIRECT_MESSAGES
-    | GatewayIntents::DIRECT_MESSAGE_REACTIONS
-    | GatewayIntents::GUILDS
-    | GatewayIntents::GUILD_EMOJIS_AND_STICKERS
-    | GatewayIntents::GUILD_MESSAGES
-    | GatewayIntents::GUILD_MESSAGE_REACTIONS;
+  let intents = GatewayIntents::DIRECT_MESSAGES | GatewayIntents::GUILDS;
 
   let mut client = DiscordClient::builder(&token, intents)
     .event_handler(Handler {
@@ -597,8 +391,8 @@ async fn main() {
       .expect("Expected to create guild commands");
 
     ApplicationCommand::set_global_application_commands(&http, |commands| {
-      stats_commands(sanitize_command(roll_command(poll_command(owo_command(
-        nya_command(news_command(help_command(commands))),
+      sanitize_command(roll_command(poll_command(owo_command(nya_command(
+        news_command(help_command(commands)),
       )))))
     })
     .await
