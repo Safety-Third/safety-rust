@@ -78,6 +78,7 @@ impl EventHandler for Handler {
       Interaction::ModalSubmit(submit) => {
         if let Err(error) = match submit.data.custom_id.as_str() {
           "briefing" => interaction_briefing_followup(&ctx, &submit).await,
+          "options_add" => interaction_poll_add_followup(&ctx, &submit).await,
           _ => Err(format!("No modal {}", submit.data.custom_id)),
         } {
           let _ = submit
@@ -96,6 +97,7 @@ impl EventHandler for Handler {
       Interaction::MessageComponent(comp_inter) => {
         if let Err(error) = match comp_inter.data.custom_id.as_str() {
           "close" | "delete" => handle_poll_interaction(&ctx, &comp_inter).await,
+          "add" => handle_poll_add(&ctx, &comp_inter).await,
           _ => Ok(()),
         } {
           println!("An error occurred: {:?}", error);

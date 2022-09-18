@@ -5,10 +5,13 @@ use chrono_tz::EST5EDT;
 use lazy_static::lazy_static;
 use regex::Regex;
 use serenity::{
-  builder::CreateApplicationCommands,
+  builder::{CreateApplicationCommands, CreateInteractionResponse},
   model::prelude::interactions::{
     application_command::*,
-    message_component::{ButtonStyle, MessageComponentInteraction},
+    message_component::{
+      ActionRowComponent, ButtonStyle, InputTextStyle, MessageComponentInteraction,
+    },
+    modal::ModalSubmitInteraction,
   },
   model::prelude::*,
   prelude::*,
@@ -59,7 +62,6 @@ pub fn poll_command(commands: &mut CreateApplicationCommands) -> &mut CreateAppl
             .required(idx < 3)
           );
         }
-        
 
         new
       })
@@ -88,7 +90,8 @@ pub fn poll_command(commands: &mut CreateApplicationCommands) -> &mut CreateAppl
   )
 }
 
-const BOOL_FAIL_MESSAGE: &str = "You must say whether others are allowed to add to this poll or not";
+const BOOL_FAIL_MESSAGE: &str =
+  "You must say whether others are allowed to add to this poll or not";
 
 pub async fn interaction_poll(
   ctx: &Context,
@@ -137,17 +140,17 @@ async fn new_poll(
   let allow_others = match &data_options[2].value {
     Some(field) => match field.as_bool() {
       Some(boolean) => boolean,
-      None => return Err(String::from(BOOL_FAIL_MESSAGE))
+      None => return Err(String::from(BOOL_FAIL_MESSAGE)),
     },
-    None => return Err(String::from(BOOL_FAIL_MESSAGE))
+    None => return Err(String::from(BOOL_FAIL_MESSAGE)),
   };
 
   let pin = match &data_options[3].value {
     Some(field) => match field.as_bool() {
       Some(boolean) => boolean,
-      None => return Err(String::from(BOOL_FAIL_MESSAGE))
+      None => return Err(String::from(BOOL_FAIL_MESSAGE)),
     },
-    None => return Err(String::from(BOOL_FAIL_MESSAGE))
+    None => return Err(String::from(BOOL_FAIL_MESSAGE)),
   };
 
   for option in &data_options[4..] {
@@ -217,10 +220,14 @@ async fn new_poll(
                 .field("duration", format_duration(&duration), true)
                 .field("poll id", &poll_id, true)
                 .field("ends at", time_str, false)
-                .field("Others can edit", match allow_others {
-                  true => "Yes",
-                  false => "No"
-                }, false)
+                .field(
+                  "Others can edit",
+                  match allow_others {
+                    true => "Yes",
+                    false => "No",
+                  },
+                  false,
+                )
                 .description(description)
             })
             .components(|comp| {
@@ -237,6 +244,12 @@ async fn new_poll(
                       .style(ButtonStyle::Secondary)
                       .label("Close this poll")
                       .custom_id("close")
+                  })
+                  .create_button(|button| {
+                    button
+                      .style(ButtonStyle::Primary)
+                      .label("Add an option")
+                      .custom_id("add")
                   })
               })
             })
@@ -280,6 +293,11 @@ async fn new_poll(
   }
 }
 
+enum Inter<'t> {
+  App(&'t ApplicationCommandInteraction),
+  Modal(&'t ModalSubmitInteraction),
+}
+
 async fn option_add(
   ctx: &Context,
   interaction: &ApplicationCommandInteraction,
@@ -310,6 +328,25 @@ async fn option_add(
     ));
   }
 
+  do_option_add(
+    ctx,
+    Inter::App(interaction),
+    interaction.channel_id.0,
+    interaction.user.id.0,
+    poll_id,
+    options,
+  )
+  .await
+}
+
+async fn do_option_add<'t>(
+  ctx: &Context,
+  interaction: Inter<'t>,
+  channel_id: u64,
+  user_id: u64,
+  poll_id: String,
+  options: Vec<String>,
+) -> Result<(), String> {
   let poll: Poll = {
     let lock = {
       let mut context = ctx.data.write().await;
@@ -327,10 +364,12 @@ async fn option_add(
   };
 
   if poll.others {
-    if poll.channel != interaction.channel_id.0 {
-      return Err(String::from("You must be in the same channel to add an option to a poll"));
+    if poll.channel != channel_id {
+      return Err(String::from(
+        "You must be in the same channel to add an option to a poll",
+      ));
     }
-  } else if poll.author != interaction.user.id.0 {
+  } else if poll.author != user_id {
     return Err(String::from("Only the creator of a poll can edit it"));
   }
 
@@ -406,17 +445,38 @@ async fn option_add(
   }
 
   if count == 0 {
-    let _ = interaction
-      .create_interaction_response(ctx, |resp| {
-        resp
-          .kind(InteractionResponseType::ChannelMessageWithSource)
-          .interaction_response_data(|msg| {
-            msg
-              .content("All the options you asked to add already exist; no changes have been made.")
-              .flags(InteractionApplicationCommandCallbackDataFlags::EPHEMERAL)
+    let _ = match interaction {
+      Inter::App(data) => {
+        data
+          .create_interaction_response(ctx, |resp| {
+            resp
+              .kind(InteractionResponseType::ChannelMessageWithSource)
+              .interaction_response_data(|msg| {
+                msg
+                  .content(
+                    "All the options you asked to add already exist; no changes have been made.",
+                  )
+                  .ephemeral(true)
+              })
           })
-      })
-      .await;
+          .await
+      }
+      Inter::Modal(data) => {
+        data
+          .create_interaction_response(ctx, |resp| {
+            resp
+              .kind(InteractionResponseType::ChannelMessageWithSource)
+              .interaction_response_data(|msg| {
+                msg
+                  .content(
+                    "All the options you asked to add already exist; no changes have been made.",
+                  )
+                  .ephemeral(true)
+              })
+          })
+          .await
+      }
+    };
 
     return Ok(());
   }
@@ -442,19 +502,39 @@ async fn option_add(
     .await
   {
     Ok(_) => {
-      let _ = interaction
-        .create_interaction_response(ctx, |resp| {
-          resp
-            .kind(InteractionResponseType::ChannelMessageWithSource)
-            .interaction_response_data(|msg| {
-              msg.content(format!(
-                "New options for poll **{}**:\n>>> {}",
-                poll_id,
-                added.join("\n")
-              ))
+      let _ = match interaction {
+        Inter::App(data) => {
+          data
+            .create_interaction_response(ctx, |resp| {
+              resp
+                .kind(InteractionResponseType::ChannelMessageWithSource)
+                .interaction_response_data(|msg| {
+                  msg.content(format!(
+                    "New options for poll **{}**:\n>>> {}",
+                    poll_id,
+                    added.join("\n")
+                  ))
+                })
             })
-        })
-        .await;
+            .await
+        }
+        Inter::Modal(data) => {
+          data
+            .create_interaction_response(ctx, |resp| {
+              resp
+                .kind(InteractionResponseType::ChannelMessageWithSource)
+                .interaction_response_data(|msg| {
+                  msg.content(format!(
+                    "New options for poll **{}**:\n>>> {}",
+                    poll_id,
+                    added.join("\n")
+                  ))
+                })
+            })
+            .await
+        }
+      };
+
       let reactions: Vec<ReactionType> = EMOJI_ORDER[existing_len..ending_len]
         .iter()
         .map(|emoji| ReactionType::Unicode(emoji.to_string()))
@@ -550,6 +630,96 @@ pub async fn handle_poll_interaction(
 
     Ok(())
   }
+}
+
+pub async fn handle_poll_add(
+  ctx: &Context,
+  interaction: &MessageComponentInteraction,
+) -> Result<(), String> {
+  let msg = &interaction.message;
+  let msg_id = &msg.embeds[0].fields[1].value;
+
+  let poll = match {
+    let lock = {
+      let mut context = ctx.data.write().await;
+      context
+        .get_mut::<RedisSchedulerKey>()
+        .expect("Expected redis instance")
+        .clone()
+    };
+
+    let mut redis_scheduler = lock.lock().await;
+    redis_scheduler.get_job(msg_id).await
+  } {
+    Ok(poll) => poll,
+    Err(error) => {
+      return Err(format!(
+        "An error occurred when trying to close the poll: {}",
+        error
+      ))
+    }
+  };
+
+  if poll.others || msg.mentions.len() == 1 && interaction.user == msg.mentions[0] {
+    let _ = interaction
+      .create_interaction_response(ctx, |response| {
+        response
+          .kind(InteractionResponseType::Modal)
+          .interaction_response_data(|msg| {
+            msg
+              .ephemeral(true)
+              .title("Add one or more options")
+              .custom_id("options_add")
+              .components(|comp| {
+                comp.create_action_row(|row| {
+                  row.create_input_text(|text| {
+                    text
+                      .custom_id(msg_id)
+                      .label("Your options")
+                      .placeholder("Please have one option per line")
+                      .required(true)
+                      .style(InputTextStyle::Paragraph)
+                  })
+                })
+              })
+          })
+      })
+      .await;
+
+    Ok(())
+  } else {
+    let _ = interaction
+      .create_interaction_response(ctx, |resp| {
+        resp.kind(InteractionResponseType::DeferredUpdateMessage)
+      })
+      .await;
+
+    Ok(())
+  }
+}
+
+pub async fn interaction_poll_add_followup(
+  ctx: &Context,
+  modal: &ModalSubmitInteraction,
+) -> Result<(), String> {
+  let (id, ops) =
+    if let ActionRowComponent::InputText(text) = &modal.data.components[0].components[0] {
+      (text.custom_id.clone(), text.value.clone())
+    } else {
+      return Err(String::from("You must provide some options"));
+    };
+
+  let options: Vec<String> = ops.split("\n").map(|f| f.to_owned()).collect();
+
+  do_option_add(
+    ctx,
+    Inter::Modal(modal),
+    modal.channel_id.0,
+    modal.user.id.0,
+    id,
+    options,
+  )
+  .await
 }
 
 const TIMING_ERROR_STR: &str = "It looks like you provided the wrong time string.
