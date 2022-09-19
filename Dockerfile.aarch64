@@ -1,0 +1,15 @@
+FROM arm64v8/rust:latest as builder
+
+RUN apt update && apt upgrade -y
+RUN apt install -y g++ libssl-dev pkg-config 
+
+WORKDIR /usr/src/app
+COPY . . 
+
+RUN cargo install --path .
+
+FROM arm64v8/debian:stable-slim
+RUN apt update && apt install -y ca-certificates
+COPY --from=builder /usr/local/cargo/bin/safety-rust /usr/local/bin/safety-rust
+
+CMD ["safety-rust"]
