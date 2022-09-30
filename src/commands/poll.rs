@@ -317,7 +317,12 @@ async fn option_add(
   for option in &data_options[1..] {
     if let Some(op) = &option.value {
       if let Some(op_str) = op.as_str() {
-        options.push(String::from(op_str.trim()));
+        let trimmed = op_str.trim();
+
+        if trimmed != "" {
+          options.push(String::from(op_str.trim()));
+        }
+
         continue;
       }
     }
@@ -347,6 +352,10 @@ async fn do_option_add<'t>(
   poll_id: String,
   options: Vec<String>,
 ) -> Result<(), String> {
+  if options.len() == 0 {
+    return Err(String::from("You must provide at least one option"));
+  }
+
   let poll: Poll = {
     let lock = {
       let mut context = ctx.data.write().await;
@@ -709,7 +718,18 @@ pub async fn interaction_poll_add_followup(
       return Err(String::from("You must provide some options"));
     };
 
-  let options: Vec<String> = ops.split("\n").map(|f| f.to_owned()).collect();
+  let options: Vec<String> = ops
+    .split("\n")
+    .filter_map(|f| {
+      let text = f.trim();
+
+      if text != "" {
+        Some(text.to_owned())
+      } else {
+        None
+      }
+    })
+    .collect();
 
   do_option_add(
     ctx,

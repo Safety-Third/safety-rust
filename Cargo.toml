@@ -4,6 +4,10 @@ version = "0.1.1"
 authors = ["Kendall Garner <17521368+kgarner7@users.noreply.github.com>"]
 edition = "2018"
 
+[[bin]]
+name = "safety-rust"
+path = "src/main.rs"
+
 [dependencies]
 async-trait = "0.1.50"
 bincode = "1.3"

@@ -99,7 +99,9 @@ impl Callable<Arc<Http>> for Poll {
           None => 0,
         };
 
-        options.push(&option[index..]);
+        if index < option.len() {
+          options.push(&option[index..]);
+        }
       }
     }
 
