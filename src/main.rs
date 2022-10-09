@@ -98,6 +98,7 @@ impl EventHandler for Handler {
         if let Err(error) = match comp_inter.data.custom_id.as_str() {
           "close" | "delete" => handle_poll_interaction(&ctx, &comp_inter).await,
           "add" => handle_poll_add(&ctx, &comp_inter).await,
+          "toggle" => handle_poll_options_toggle(&ctx, &comp_inter).await,
           _ => Ok(()),
         } {
           println!("An error occurred: {:?}", error);

@@ -204,46 +204,41 @@ impl Scheduler {
       .await
   }
 
-  pub async fn edit_job(&mut self, task: &Poll, id: &str, time: Option<i64>) -> RedisResult<()> {
-    let task = match bincode::serialize(task) {
-      Ok(serialized) => serialized,
-      Err(error) => return redis_error!(error),
-    };
-
+  pub async fn edit_job<T: Sized>(&mut self, id: &str, f: fn(Poll) -> (Poll, T)) -> RedisResult<T> {
     let con = &mut self.connection;
 
-    let error_msg: Option<String> = async_transaction!(con, &[JOBS_KEY, SCHEDULE_KEY], {
-      let exists: u8 = con.hexists(JOBS_KEY, id).await?;
+    Ok(async_transaction!(con, &[JOBS_KEY], {
+      let task: Option<Vec<u8>> = con.hget(JOBS_KEY, id).await?;
 
-      if exists == 0 {
-        Some(Some(String::from("No poll found with ID {}")))
+      if task.is_none() {
+        return redis_error!(format!("No poll found with ID {}", id));
       } else {
-        if let Some(new_time) = time {
-          pipe()
-            .atomic()
-            .hset(JOBS_KEY, id, &task[..])
-            .ignore()
-            .zadd(SCHEDULE_KEY, id, new_time)
-            .ignore()
-            .query_async(con)
-            .await?;
-        } else {
-          pipe()
-            .atomic()
-            .hset(JOBS_KEY, id, &task[..])
-            .ignore()
-            .query_async(con)
-            .await?;
-        }
-        Some(None)
-      }
-    });
+        let job: Poll = match bincode::deserialize(&task.unwrap()) {
+          Ok(result) => result,
+          Err(error) => return redis_error!(error),
+        };
 
-    if let Some(error) = error_msg {
-      redis_error!(error)
-    } else {
-      Ok(())
-    }
+        let (result, data) = f(job);
+
+        let task = match bincode::serialize(&result) {
+          Ok(serialized) => serialized,
+          Err(error) => return redis_error!(error),
+        };
+
+        let res: Option<()> = pipe()
+          .atomic()
+          .hset(JOBS_KEY, id, &task)
+          .ignore()
+          .query_async(con)
+          .await?;
+
+        if res.is_none() {
+          None
+        } else {
+          Some(data)
+        }
+      }
+    }))
   }
 
   pub async fn get_job(&mut self, id: &str) -> RedisResult<Poll> {

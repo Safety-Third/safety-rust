@@ -5,7 +5,7 @@ use chrono_tz::EST5EDT;
 use lazy_static::lazy_static;
 use regex::Regex;
 use serenity::{
-  builder::{CreateApplicationCommands, CreateInteractionResponse},
+  builder::{CreateApplicationCommands, CreateComponents},
   model::prelude::interactions::{
     application_command::*,
     message_component::{
@@ -15,7 +15,7 @@ use serenity::{
   },
   model::prelude::*,
   prelude::*,
-  utils::Color,
+  utils::{Color, Colour},
 };
 
 use super::util::{format_duration, get_str_or_error, get_user};
@@ -205,7 +205,7 @@ async fn new_poll(
         .kind(InteractionResponseType::ChannelMessageWithSource)
         .interaction_response_data(|msg| {
           msg
-            .content(format!("Poll: '{}' by {}", &topic_str, &mention))
+            .content(format!("{} Poll: '{}'", &mention, &topic_str))
             .embed(|e| {
               let mut description = String::from(">>> ");
 
@@ -230,29 +230,7 @@ async fn new_poll(
                 )
                 .description(description)
             })
-            .components(|comp| {
-              comp.create_action_row(|row| {
-                row
-                  .create_button(|button| {
-                    button
-                      .style(ButtonStyle::Danger)
-                      .label("Delete this poll")
-                      .custom_id("delete")
-                  })
-                  .create_button(|button| {
-                    button
-                      .style(ButtonStyle::Secondary)
-                      .label("Close this poll")
-                      .custom_id("close")
-                  })
-                  .create_button(|button| {
-                    button
-                      .style(ButtonStyle::Primary)
-                      .label("Add an option")
-                      .custom_id("add")
-                  })
-              })
-            })
+            .components(components(allow_others))
         })
     })
     .await
@@ -519,8 +497,9 @@ async fn do_option_add<'t>(
                 .kind(InteractionResponseType::ChannelMessageWithSource)
                 .interaction_response_data(|msg| {
                   msg.content(format!(
-                    "New options for poll **{}**:\n>>> {}",
+                    "New options for poll **{}** by <@{}>:\n>>> {}",
                     poll_id,
+                    user_id,
                     added.join("\n")
                   ))
                 })
@@ -534,8 +513,9 @@ async fn do_option_add<'t>(
                 .kind(InteractionResponseType::ChannelMessageWithSource)
                 .interaction_response_data(|msg| {
                   msg.content(format!(
-                    "New options for poll **{}**:\n>>> {}",
+                    "New options for poll **{}** by <@{}>:\n>>> {}",
                     poll_id,
+                    user_id,
                     added.join("\n")
                   ))
                 })
@@ -631,14 +611,97 @@ pub async fn handle_poll_interaction(
       _ => Ok(()),
     }
   } else {
-    let _ = interaction
-      .create_interaction_response(ctx, |resp| {
-        resp.kind(InteractionResponseType::DeferredUpdateMessage)
-      })
-      .await;
-
+    nop(ctx, interaction).await;
     Ok(())
   }
+}
+
+pub async fn handle_poll_options_toggle(
+  ctx: &Context,
+  interaction: &MessageComponentInteraction,
+) -> Result<(), String> {
+  let msg = &interaction.message;
+  let msg_id = &msg.embeds[0].fields[1].value;
+
+  if interaction.user != msg.mentions[0] {
+    nop(ctx, interaction).await;
+    return Ok(());
+  }
+
+  let allowing_others = {
+    let lock = {
+      let mut context = ctx.data.write().await;
+      context
+        .get_mut::<RedisSchedulerKey>()
+        .expect("Expected redis instance")
+        .clone()
+    };
+
+    let mut redis_scheduler = lock.lock().await;
+    redis_scheduler
+      .edit_job(msg_id, |mut f| {
+        let will_allow_others = !f.others;
+        f.others = will_allow_others;
+        (f, will_allow_others)
+      })
+      .await
+      .map_err(|e| e.to_string())?
+  };
+
+  let embed = &interaction.message.embeds[0];
+
+  let mut fields: Vec<(String, String, bool)> = embed
+    .fields
+    .iter()
+    .map(|field| (field.name.clone(), field.value.clone(), field.inline))
+    .collect();
+
+  let poll_id = fields[1].1.clone();
+
+  if 3 < fields.len() {
+    fields[3].1 = String::from(match allowing_others {
+      true => "Yes",
+      false => "No",
+    });
+  } else {
+    return Err(String::from(
+      "Not enough fields provided; something has gone horribly wrong",
+    ));
+  }
+
+  let _ = interaction
+    .message
+    .clone()
+    .edit(&ctx, |m| {
+      m.embed(|e| {
+        e.color(Colour::BLITZ_BLUE)
+          .title(embed.title.clone().unwrap_or(String::from("")))
+          .description(embed.description.clone().unwrap_or(String::from("")))
+          .fields(fields)
+      })
+      .components(components(allowing_others))
+    })
+    .await;
+
+  let _ = interaction
+    .create_interaction_response(ctx, |resp| {
+      resp
+        .kind(InteractionResponseType::ChannelMessageWithSource)
+        .interaction_response_data(|msg| {
+          msg.content(format!(
+            "{} has set poll {} to editable by **{}**",
+            interaction.user.mention(),
+            poll_id,
+            match allowing_others {
+              true => "everyone",
+              false => "author only",
+            }
+          ))
+        })
+    })
+    .await;
+
+  Ok(())
 }
 
 pub async fn handle_poll_add(
@@ -697,12 +760,7 @@ pub async fn handle_poll_add(
 
     Ok(())
   } else {
-    let _ = interaction
-      .create_interaction_response(ctx, |resp| {
-        resp.kind(InteractionResponseType::DeferredUpdateMessage)
-      })
-      .await;
-
+    nop(ctx, interaction).await;
     Ok(())
   }
 }
@@ -831,5 +889,48 @@ fn parse_time(timing: &str) -> Result<Duration, &str> {
     Err("Poll must be at least 1 minute")
   } else {
     Ok(duration)
+  }
+}
+
+async fn nop(ctx: &Context, interaction: &MessageComponentInteraction) {
+  let _ = interaction
+    .create_interaction_response(ctx, |resp| {
+      resp.kind(InteractionResponseType::DeferredUpdateMessage)
+    })
+    .await;
+}
+
+fn components(allow_others: bool) -> impl Fn(&mut CreateComponents) -> &mut CreateComponents {
+  move |comp| {
+    comp.create_action_row(|row| {
+      row
+        .create_button(|button| {
+          button
+            .style(ButtonStyle::Danger)
+            .label("Delete this poll")
+            .custom_id("delete")
+        })
+        .create_button(|button| {
+          button
+            .style(ButtonStyle::Secondary)
+            .label("Close this poll")
+            .custom_id("close")
+        })
+        .create_button(|button| {
+          button
+            .style(ButtonStyle::Primary)
+            .label("Add an option")
+            .custom_id("add")
+        })
+        .create_button(|button| {
+          button
+            .style(ButtonStyle::Secondary)
+            .label(match allow_others {
+              true => "Only you add options",
+              false => "Let all add options",
+            })
+            .custom_id("toggle")
+        })
+    })
   }
 }
