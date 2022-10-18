@@ -110,6 +110,11 @@ pub async fn interaction_poll(
   }
 }
 
+const FORMAT_STRINGS: [&str; 20] = [
+  "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "A", "B", "C", "D", "E", "F", "G", "H", "I",
+  "J",
+];
+
 async fn new_poll(
   ctx: &Context,
   interaction: &ApplicationCommandInteraction,
@@ -205,12 +210,15 @@ async fn new_poll(
         .kind(InteractionResponseType::ChannelMessageWithSource)
         .interaction_response_data(|msg| {
           msg
-            .content(format!("{} Poll: '{}'", &mention, &topic_str))
+            .content(format!(
+              "{} Poll: '{}'\n**BEGIN DISCUSSION**",
+              &mention, &topic_str
+            ))
             .embed(|e| {
               let mut description = String::from(">>> ");
 
               for (count, option) in options.iter().enumerate() {
-                description += &format!("{}. {}\n", count + 1, &option);
+                description += &format!("{}. {}\n", FORMAT_STRINGS[count], &option);
               }
 
               let time_str = time.format("%D %r %Z");
