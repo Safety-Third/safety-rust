@@ -31,7 +31,7 @@ use tokio::{
   time::{interval, sleep},
 };
 
-use commands::{help::*, link::*, news::*, nya::*, owo::*, poll::*, roll::*};
+use commands::{copy::*, help::*, link::*, news::*, nya::*, owo::*, poll::*, roll::*};
 
 use util::{
   rng::random_number,
@@ -54,9 +54,11 @@ impl EventHandler for Handler {
         let command_name = app_command.data.name.as_str();
         if let Err(error) = match command_name {
           "briefing" => interaction_briefing(&ctx, &app_command).await,
+          "copy" => interaction_copy(&ctx, &app_command).await,
           "help" => interaction_help(&ctx, &app_command).await,
           "nya" => interaction_nya(&ctx, &app_command).await,
           "owo" => interaction_owo(&ctx, &app_command).await,
+          "paste" => interaction_paste(&ctx, &app_command).await,
           "poll" => interaction_poll(&ctx, &app_command).await,
           "roll" => interaction_roll(&ctx, &app_command).await,
           "sanitize" => interaction_sanitize(&ctx, &app_command).await,
@@ -394,8 +396,8 @@ async fn main() {
       .expect("Expected to create guild commands");
 
     ApplicationCommand::set_global_application_commands(&http, |commands| {
-      sanitize_command(roll_command(poll_command(owo_command(nya_command(
-        news_command(help_command(commands)),
+      copy_command(paste_command(sanitize_command(roll_command(poll_command(
+        owo_command(nya_command(news_command(help_command(commands)))),
       )))))
     })
     .await
