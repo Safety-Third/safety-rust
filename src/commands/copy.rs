@@ -119,7 +119,7 @@ pub async fn interaction_paste(
             resp
               .kind(InteractionResponseType::ChannelMessageWithSource)
               .interaction_response_data(|msg| {
-                msg.content(format!("Paste for {}: \n>>> {}", user.mention(), copy))
+                msg.content(format!("Paste for {}: \n>>> {}", user.name, copy))
               })
           })
           .await;
