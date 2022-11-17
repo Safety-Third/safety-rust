@@ -1,12 +1,15 @@
 use owoify_rs::{Owoifiable, OwoifyLevel};
 use serenity::{
-  builder::CreateApplicationCommands, model::prelude::interactions::application_command::*,
-  model::prelude::*, prelude::*,
+  builder::CreateApplicationCommands,
+  model::{
+    application::{command::*, interaction::application_command::*},
+    prelude::interaction::InteractionResponseType,
+  },
+  prelude::*,
 };
 
 pub fn owo_command(commands: &mut CreateApplicationCommands) -> &mut CreateApplicationCommands {
-  commands
-    .create_application_command(|command| command.name("owo").kind(ApplicationCommandType::Message))
+  commands.create_application_command(|command| command.name("owo").kind(CommandType::Message))
 }
 
 pub async fn interaction_owo(
@@ -20,11 +23,7 @@ pub async fn interaction_owo(
       .create_interaction_response(ctx, |resp| {
         resp
           .kind(InteractionResponseType::ChannelMessageWithSource)
-          .interaction_response_data(|msg| {
-            msg
-              .content(new_content)
-              .flags(InteractionApplicationCommandCallbackDataFlags::EPHEMERAL)
-          })
+          .interaction_response_data(|msg| msg.content(new_content).ephemeral(true))
       })
       .await;
 

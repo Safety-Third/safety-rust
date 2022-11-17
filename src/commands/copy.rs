@@ -1,15 +1,17 @@
 use redis::{cmd, AsyncCommands};
 use serenity::{
-  builder::CreateApplicationCommands, model::prelude::interactions::application_command::*,
-  model::prelude::*, prelude::*,
+  builder::CreateApplicationCommands,
+  model::application::{
+    command::*,
+    interaction::{application_command::*, *},
+  },
+  prelude::*,
 };
 
 use crate::util::scheduler::RedisConnectionKey;
 
 pub fn copy_command(commands: &mut CreateApplicationCommands) -> &mut CreateApplicationCommands {
-  commands.create_application_command(|command| {
-    command.name("copy").kind(ApplicationCommandType::Message)
-  })
+  commands.create_application_command(|command| command.name("copy").kind(CommandType::Message))
 }
 
 pub async fn interaction_copy(
@@ -77,8 +79,7 @@ pub async fn interaction_copy(
 }
 
 pub fn paste_command(commands: &mut CreateApplicationCommands) -> &mut CreateApplicationCommands {
-  commands
-    .create_application_command(|command| command.name("paste").kind(ApplicationCommandType::User))
+  commands.create_application_command(|command| command.name("paste").kind(CommandType::User))
 }
 
 pub async fn interaction_paste(

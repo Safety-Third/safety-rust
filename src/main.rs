@@ -2,6 +2,7 @@ mod commands;
 mod util;
 
 use std::{
+  collections::HashMap,
   env::var,
   ops::{Add, Sub},
   sync::{
@@ -11,9 +12,9 @@ use std::{
   time::Duration,
 };
 
-use chrono::{Datelike, Duration as ChronoDuration, Timelike, Utc};
+use chrono::{Datelike, Duration as ChronoDuration, NaiveDate, Timelike, Utc};
 use chrono_tz::EST5EDT;
-use redis::{AsyncCommands, Client};
+use redis::{AsyncCommands, Client, RedisError};
 use serenity::{
   async_trait,
   client::Client as DiscordClient,
@@ -21,7 +22,10 @@ use serenity::{
   model::{
     gateway::{Activity, GatewayIntents},
     id::{ChannelId, GuildId},
-    interactions::{application_command::ApplicationCommand, Interaction, InteractionResponseType},
+    prelude::{
+      command::Command,
+      interaction::{Interaction, InteractionResponseType},
+    },
   },
   prelude::{Context, EventHandler},
 };
@@ -31,7 +35,7 @@ use tokio::{
   time::{interval, sleep},
 };
 
-use commands::{copy::*, help::*, link::*, news::*, nya::*, owo::*, poll::*, roll::*};
+use commands::{birthday::*, copy::*, help::*, link::*, news::*, nya::*, owo::*, poll::*, roll::*};
 
 use util::{
   rng::random_number,
@@ -39,7 +43,6 @@ use util::{
     Callable, MyVec, RedisConnectionKey, RedisSchedulerKey, RedisWrapper,
     Scheduler as RedisScheduler,
   },
-  sheets::{parse_date, query},
 };
 
 struct Handler {
@@ -53,6 +56,7 @@ impl EventHandler for Handler {
       Interaction::ApplicationCommand(app_command) => {
         let command_name = app_command.data.name.as_str();
         if let Err(error) = match command_name {
+          "birthday" => interaction_birthday(&ctx, &app_command).await,
           "briefing" => interaction_briefing(&ctx, &app_command).await,
           "copy" => interaction_copy(&ctx, &app_command).await,
           "help" => interaction_help(&ctx, &app_command).await,
@@ -154,8 +158,6 @@ impl EventHandler for Handler {
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 12)]
 async fn main() {
-  let api_key = var("GOOGLE_API_KEY").expect("Expected Google API key");
-
   let app_id: u64 = var("RUST_APP_ID")
     .expect("Expected an application id in the environment")
     .parse()
@@ -165,10 +167,6 @@ async fn main() {
     .expect("Expected birthday announcement channel")
     .parse::<u64>()
     .expect("Expected channel to be a number");
-
-  let birthday_sheet_id = var("SAFETY_GOOGLE_DOCS_LINK").expect("Expected Safety Google Docs link");
-
-  let birthday_vector = vec!["'2018-2019 Roster'!A2:A51", "'2018-2019 Roster'!J2:J51"];
 
   let redis_url = var("SAFETY_REDIS_URL").unwrap_or_else(|_| String::from("redis://127.0.0.1"));
 
@@ -251,61 +249,48 @@ async fn main() {
 
     let http_clone = client.cache_and_http.http.clone();
 
+    let conn_key = Arc::new(Mutex::new(RedisWrapper(persistent_connection)));
+    let conn_clone = conn_key.clone();
+
     spawn(async move {
       loop {
         let now = Utc::now().with_timezone(&EST5EDT);
-        let next_time = now.date().succ().and_hms(0, 0, 30);
+        // let next_time = now.date().succ().and_hms(0, 0, 30);
+        let next_time = now;
 
         let duration_to_sleep = next_time.signed_duration_since(now).to_std().unwrap();
 
         sleep(duration_to_sleep).await;
 
-        match query(&api_key, &birthday_sheet_id, &birthday_vector).await {
-          Ok(sheet) => {
-            if sheet.value_ranges.len() != 2 {
-              println!("Sheet has more than two ranges: {:?}", sheet);
-              return;
-            }
+        let keys: Result<HashMap<String, String>, RedisError> =
+          conn_clone.lock().await.0.hgetall(BIRTHDAY_KEY).await;
 
-            for idx in 0..49 {
-              let potential_date = &sheet.value_ranges[1].values[idx];
-              let potential_name = &sheet.value_ranges[0].values[idx];
+        if let Err(error) = keys {
+          println!("Error getting birthdays: {:?}", error);
+          continue;
+        }
 
-              if potential_date.len() != 1 || potential_name.len() != 1 {
-                continue;
-              }
+        for (user_id, birthday) in keys.unwrap() {
+          let date = NaiveDate::parse_from_str(&birthday, BIRTHDAY_FMT).unwrap();
 
-              let (month, day, year) = match parse_date(&potential_date[0]) {
-                Ok(result) => result,
-                Err(_) => continue,
-              };
+          if date.month() == next_time.month() && date.day() == next_time.day() {
+            let age = next_time.year() - date.year();
 
-              if next_time.day() == day && next_time.month() == month {
-                let msg = format!(
-                  "Happy birthday {}! ({} years)!",
-                  potential_name[0],
-                  next_time.year() - year
-                );
-
-                let result = ChannelId(birthday_announce_channel)
-                  .say(&http_clone, msg)
-                  .await;
-                println!("{:?}", result);
-              }
-            }
+            let _ = ChannelId(birthday_announce_channel)
+              .say(
+                &http_clone,
+                format!("User <@{}> is {} years old!", user_id, age),
+              )
+              .await;
           }
-          Err(error) => {
-            println!("Failed to execute query: {:?}", error);
-            return;
-          }
-        };
+        }
+
+        break;
       }
     });
 
-    let conn_key = Arc::new(Mutex::new(RedisWrapper(persistent_connection)));
-    let conn_clone = conn_key.clone();
-
     let http_clone2 = client.cache_and_http.http.clone();
+    let conn_clone2 = conn_key.clone();
 
     spawn(async move {
       let mut now = Utc::now().with_timezone(&EST5EDT);
@@ -320,7 +305,7 @@ async fn main() {
         .unwrap();
 
       let current_jobs: MyVec = {
-        let mut client = conn_clone.lock().await;
+        let mut client = conn_clone2.lock().await;
         client
           .0
           .zrangebyscore(BRIEFING_KEY, "-inf", this_weeks_monday.timestamp())
@@ -334,7 +319,7 @@ async fn main() {
           println!("{}", error);
         } else {
           let _: u64 = {
-            let mut client = conn_clone.lock().await;
+            let mut client = conn_clone2.lock().await;
             client
               .0
               .zrembyscore(BRIEFING_KEY, "-inf", this_weeks_monday.timestamp())
@@ -352,7 +337,7 @@ async fn main() {
         sleep(duration_to_sleep).await;
 
         let current_jobs: MyVec = {
-          let mut client = conn_clone.lock().await;
+          let mut client = conn_clone2.lock().await;
           client
             .0
             .zrangebyscore(BRIEFING_KEY, "-inf", next_time.timestamp())
@@ -366,7 +351,7 @@ async fn main() {
             println!("{}", error);
           } else {
             let _: u64 = {
-              let mut client = conn_clone.lock().await;
+              let mut client = conn_clone2.lock().await;
               client
                 .0
                 .zrembyscore(BRIEFING_KEY, "-inf", next_time.timestamp())
@@ -391,11 +376,13 @@ async fn main() {
   {
     let http = Http::new_with_application_id(&token, app_id);
 
-    GuildId::set_application_commands(&GuildId(guild_id), &http, |commands| commands)
-      .await
-      .expect("Expected to create guild commands");
+    GuildId::set_application_commands(&GuildId(guild_id), &http, |commands| {
+      birthday_command(commands)
+    })
+    .await
+    .expect("Expected to create guild commands");
 
-    ApplicationCommand::set_global_application_commands(&http, |commands| {
+    Command::set_global_application_commands(&http, |commands| {
       copy_command(paste_command(sanitize_command(roll_command(poll_command(
         owo_command(nya_command(news_command(help_command(commands)))),
       )))))

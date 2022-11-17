@@ -1,6 +1,11 @@
 use serenity::{
-  builder::CreateApplicationCommands, model::prelude::interactions::application_command::*,
-  model::prelude::*, prelude::*, utils::Color,
+  builder::CreateApplicationCommands,
+  model::application::{
+    command::*,
+    interaction::{application_command::*, *},
+  },
+  prelude::*,
+  utils::Color,
 };
 
 const DESCRIPTION: &str = "Welcome to Safety-chan v4.
@@ -19,7 +24,7 @@ pub fn help_command(commands: &mut CreateApplicationCommands) -> &mut CreateAppl
       .create_option(|new| {
         new
           .name("show_to_all")
-          .kind(ApplicationCommandOptionType::Boolean)
+          .kind(CommandOptionType::Boolean)
           .description("Whether to make this help message visible to everyone")
           .required(false)
       })

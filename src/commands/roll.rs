@@ -4,9 +4,11 @@ use std::hash::{Hash, Hasher};
 use lazy_static::lazy_static;
 use rand::{thread_rng, Rng};
 use regex::Regex;
+use serenity::model::prelude::interaction::InteractionResponseType;
 use serenity::{
-  builder::CreateApplicationCommands, model::prelude::interactions::application_command::*,
-  model::prelude::*, prelude::*,
+  builder::CreateApplicationCommands,
+  model::application::{command::*, interaction::application_command::*},
+  prelude::*,
 };
 
 use super::util::get_mention;
@@ -20,7 +22,7 @@ pub fn roll_command(commands: &mut CreateApplicationCommands) -> &mut CreateAppl
     for idx in 1..=20 {
       comm = comm.create_option(|op| {
         op.name(format!("die-{}", idx))
-          .kind(ApplicationCommandOptionType::String)
+          .kind(CommandOptionType::String)
           .description("A die roll like 2d20+5 or 4d4dldh2+1 (4d4, drop low, 2 highest + 1)")
           .required(idx == 1)
       })

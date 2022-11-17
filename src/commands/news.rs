@@ -9,12 +9,12 @@ use serenity::{
   builder::CreateApplicationCommands,
   http::Http,
   model::{
-    interactions::{
-      application_command::ApplicationCommandInteraction,
-      message_component::{ActionRowComponent, InputTextStyle},
-      modal::ModalSubmitInteraction,
+    application::interaction::{application_command::*, *},
+    prelude::{
+      component::{ActionRowComponent, InputTextStyle},
+      interaction::modal::ModalSubmitInteraction,
+      ChannelId, Guild,
     },
-    prelude::*,
   },
   prelude::*,
 };

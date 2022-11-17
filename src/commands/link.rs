@@ -1,18 +1,18 @@
 use linkify::{Link, LinkFinder, LinkKind};
 use serenity::{
-  builder::CreateApplicationCommands, model::prelude::interactions::application_command::*,
-  model::prelude::*, prelude::*,
+  builder::CreateApplicationCommands,
+  model::application::{
+    command::*,
+    interaction::{application_command::*, *},
+  },
+  prelude::*,
 };
 use url::Url;
 
 pub fn sanitize_command(
   commands: &mut CreateApplicationCommands,
 ) -> &mut CreateApplicationCommands {
-  commands.create_application_command(|command| {
-    command
-      .name("sanitize")
-      .kind(ApplicationCommandType::Message)
-  })
+  commands.create_application_command(|command| command.name("sanitize").kind(CommandType::Message))
 }
 
 pub async fn interaction_sanitize(
@@ -34,7 +34,7 @@ pub async fn interaction_sanitize(
             .interaction_response_data(|msg| {
               msg
                 .content("No links were found in this message")
-                .flags(InteractionApplicationCommandCallbackDataFlags::EPHEMERAL)
+                .ephemeral(true)
             })
         })
         .await;
@@ -86,7 +86,7 @@ pub async fn interaction_sanitize(
               .interaction_response_data(|msg| {
                 msg
                   .content("All URLs have already been sanitized")
-                  .flags(InteractionApplicationCommandCallbackDataFlags::EPHEMERAL)
+                  .ephemeral(true)
               })
           })
           .await;

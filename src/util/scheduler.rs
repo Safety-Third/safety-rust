@@ -196,13 +196,13 @@ impl Scheduler {
     Scheduler { connection }
   }
 
-  pub async fn clear_jobs(&mut self) -> RedisResult<()> {
-    pipe()
-      .atomic()
-      .del(&[JOBS_KEY, SCHEDULE_KEY])
-      .query_async(&mut self.connection)
-      .await
-  }
+  // pub async fn clear_jobs(&mut self) -> RedisResult<()> {
+  //   pipe()
+  //     .atomic()
+  //     .del(&[JOBS_KEY, SCHEDULE_KEY])
+  //     .query_async(&mut self.connection)
+  //     .await
+  // }
 
   pub async fn edit_job<T: Sized>(&mut self, id: &str, f: fn(Poll) -> (Poll, T)) -> RedisResult<T> {
     let con = &mut self.connection;
@@ -292,36 +292,36 @@ impl Scheduler {
     Ok(jobs_as_t)
   }
 
-  pub async fn get_ready_jobs(&mut self, timestamp: i64) -> RedisResult<Vec<Poll>> {
-    let con = &mut self.connection;
+  // pub async fn get_ready_jobs(&mut self, timestamp: i64) -> RedisResult<Vec<Poll>> {
+  //   let con = &mut self.connection;
 
-    let jobs_as_string: Vec<MyVec> = async_transaction!(con, &[JOBS_KEY, SCHEDULE_KEY], {
-      let ready_jobs: Vec<String> = con.zrangebyscore(SCHEDULE_KEY, "-inf", timestamp).await?;
+  //   let jobs_as_string: Vec<MyVec> = async_transaction!(con, &[JOBS_KEY, SCHEDULE_KEY], {
+  //     let ready_jobs: Vec<String> = con.zrangebyscore(SCHEDULE_KEY, "-inf", timestamp).await?;
 
-      if ready_jobs.is_empty() {
-        Some(vec![])
-      } else {
-        pipe()
-          .atomic()
-          .hget(JOBS_KEY, ready_jobs)
-          .query_async(con)
-          .await?
-      }
-    });
+  //     if ready_jobs.is_empty() {
+  //       Some(vec![])
+  //     } else {
+  //       pipe()
+  //         .atomic()
+  //         .hget(JOBS_KEY, ready_jobs)
+  //         .query_async(con)
+  //         .await?
+  //     }
+  //   });
 
-    let mut jobs_as_t: Vec<Poll> = Vec::new();
+  //   let mut jobs_as_t: Vec<Poll> = Vec::new();
 
-    for my_vec in jobs_as_string.iter() {
-      for job in my_vec.v.iter() {
-        match bincode::deserialize(job) {
-          Ok(result) => jobs_as_t.push(result),
-          Err(error) => return Err(RedisError::from(Error::new(Other, error))),
-        }
-      }
-    }
+  //   for my_vec in jobs_as_string.iter() {
+  //     for job in my_vec.v.iter() {
+  //       match bincode::deserialize(job) {
+  //         Ok(result) => jobs_as_t.push(result),
+  //         Err(error) => return Err(RedisError::from(Error::new(Other, error))),
+  //       }
+  //     }
+  //   }
 
-    Ok(jobs_as_t)
-  }
+  //   Ok(jobs_as_t)
+  // }
 
   pub async fn pop_job(&mut self, job_id: &String) -> RedisResult<Option<Poll>> {
     let con = &mut self.connection;

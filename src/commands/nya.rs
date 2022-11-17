@@ -4,8 +4,9 @@ use reqwest::Client;
 use serde::Deserialize;
 use serenity::{
   builder::CreateApplicationCommands,
-  model::interactions::application_command::ApplicationCommandInteraction, model::prelude::*,
-  prelude::*, utils::Color,
+  model::application::interaction::{application_command::*, InteractionResponseType},
+  prelude::*,
+  utils::Color,
 };
 use tokio::sync::RwLock;
 

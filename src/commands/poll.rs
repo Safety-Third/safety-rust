@@ -6,14 +6,17 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use serenity::{
   builder::{CreateApplicationCommands, CreateComponents},
-  model::prelude::interactions::{
-    application_command::*,
-    message_component::{
-      ActionRowComponent, ButtonStyle, InputTextStyle, MessageComponentInteraction,
+  model::{
+    application::{command::*, interaction::application_command::*},
+    prelude::{
+      component::{ActionRowComponent, ButtonStyle, InputTextStyle},
+      interaction::{
+        message_component::MessageComponentInteraction, modal::ModalSubmitInteraction,
+        InteractionResponseType,
+      },
+      ChannelId, Message, ReactionType,
     },
-    modal::ModalSubmitInteraction,
   },
-  model::prelude::*,
   prelude::*,
   utils::{Color, Colour},
 };
@@ -27,29 +30,29 @@ pub fn poll_command(commands: &mut CreateApplicationCommands) -> &mut CreateAppl
       .description("Creates an emoji-based poll for a certain topic.")
       .create_option(|new| {
         let mut new = new.name("new")
-          .kind(ApplicationCommandOptionType::SubCommand)
+          .kind(CommandOptionType::SubCommand)
           .description("Create a new poll")
           .create_sub_option(|topic| topic
             .name("topic")
-            .kind(ApplicationCommandOptionType::String)
+            .kind(CommandOptionType::String)
             .description("The topic of this poll")
             .required(true)
           )
           .create_sub_option(|time| time
             .name("time")
-            .kind(ApplicationCommandOptionType::String)
+            .kind(CommandOptionType::String)
             .description("Time in the form 'X days, X hours, X minutes'. At least one of days, hours, or minutes required.")
             .required(true)
           )
           .create_sub_option(|allow_others| allow_others
             .name("allow_others_to_add_options")
-            .kind(ApplicationCommandOptionType::Boolean)
+            .kind(CommandOptionType::Boolean)
             .description("Whether to allow other users in the same channel to add options to this poll")
             .required(true)
           )
           .create_sub_option(|allow_others| allow_others
             .name("pin")
-            .kind(ApplicationCommandOptionType::Boolean)
+            .kind(CommandOptionType::Boolean)
             .description("Whether to pin this poll")
             .required(true)
           );
@@ -57,7 +60,7 @@ pub fn poll_command(commands: &mut CreateApplicationCommands) -> &mut CreateAppl
         for idx in 1..=MAX_OPTIONS {
           new = new.create_sub_option(|op| op
             .name(format!("option-{}", idx))
-            .kind(ApplicationCommandOptionType::String)
+            .kind(CommandOptionType::String)
             .description(format!("poll option {}", idx))
             .required(idx < 3)
           );
@@ -67,11 +70,11 @@ pub fn poll_command(commands: &mut CreateApplicationCommands) -> &mut CreateAppl
       })
       .create_option(|add| {
         let mut add = add.name("options_add")
-          .kind(ApplicationCommandOptionType::SubCommand)
+          .kind(CommandOptionType::SubCommand)
           .description("Add one or more options to an existing poll")
           .create_sub_option(|id| id
             .name("poll_id")
-            .kind(ApplicationCommandOptionType::String)
+            .kind(CommandOptionType::String)
             .description("The id of the poll you wish to edit")
             .required(true)
           );
@@ -79,7 +82,7 @@ pub fn poll_command(commands: &mut CreateApplicationCommands) -> &mut CreateAppl
         for idx in 1..=18 {
           add = add.create_sub_option(|op| op
             .name(format!("option-{}", idx))
-            .kind(ApplicationCommandOptionType::String)
+            .kind(CommandOptionType::String)
             .description(format!("poll option {}", idx))
             .required(idx == 1)
           );

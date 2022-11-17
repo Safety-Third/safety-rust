@@ -2,9 +2,9 @@
 
 use chrono::Duration;
 use serde_json::Value;
-use serenity::model::prelude::*;
-
-use serenity::model::interactions::application_command::ApplicationCommandInteraction;
+use serenity::model::prelude::{
+  interaction::application_command::ApplicationCommandInteraction, *,
+};
 
 #[macro_export]
 macro_rules! error {
