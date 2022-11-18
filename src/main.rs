@@ -255,8 +255,14 @@ async fn main() {
     spawn(async move {
       loop {
         let now = Utc::now().with_timezone(&EST5EDT);
-        // let next_time = now.date().succ().and_hms(0, 0, 30);
-        let next_time = now;
+        let next_time = now
+          .add(ChronoDuration::days(1))
+          .with_hour(0)
+          .unwrap()
+          .with_minute(0)
+          .unwrap()
+          .with_second(30)
+          .unwrap();
 
         let duration_to_sleep = next_time.signed_duration_since(now).to_std().unwrap();
 
@@ -279,7 +285,7 @@ async fn main() {
             let _ = ChannelId(birthday_announce_channel)
               .say(
                 &http_clone,
-                format!("User <@{}> is {} years old!", user_id, age),
+                format!("Happy birthday <@{}>. {} years", user_id, age),
               )
               .await;
           }
