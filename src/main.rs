@@ -376,15 +376,15 @@ async fn main() {
   {
     let http = Http::new_with_application_id(&token, app_id);
 
-    GuildId::set_application_commands(&GuildId(guild_id), &http, |commands| {
-      birthday_command(commands)
-    })
-    .await
-    .expect("Expected to create guild commands");
+    GuildId::set_application_commands(&GuildId(guild_id), &http, |commands| commands)
+      .await
+      .expect("Expected to create guild commands");
 
     Command::set_global_application_commands(&http, |commands| {
-      copy_command(paste_command(sanitize_command(roll_command(poll_command(
-        owo_command(nya_command(news_command(help_command(commands)))),
+      birthday_command(copy_command(paste_command(sanitize_command(roll_command(
+        poll_command(owo_command(nya_command(news_command(help_command(
+          commands,
+        ))))),
       )))))
     })
     .await
