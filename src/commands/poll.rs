@@ -421,7 +421,7 @@ async fn do_option_add<'t>(
       let op_as_string = &option.as_str();
       if !all_options.contains(op_as_string) {
         added.push(option);
-        description += &format!("\n{}. {}", count + offset, &option);
+        description += &format!("\n{}. {}", FORMAT_STRINGS[count + offset], &option);
         all_options.insert(op_as_string);
         count += 1;
       }

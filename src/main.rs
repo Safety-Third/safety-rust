@@ -290,8 +290,6 @@ async fn main() {
               .await;
           }
         }
-
-        break;
       }
     });
 
