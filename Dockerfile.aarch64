@@ -21,4 +21,7 @@ FROM arm64v8/debian:stable-slim
 RUN apt update && apt install -y ca-certificates
 COPY --from=builder /usr/local/cargo/bin/safety-rust /usr/local/bin/safety-rust
 
+VOLUME /tmp
+HEALTHCHECK --interval=30s CMD grep -q "OK: true" /tmp/safety_health
+
 CMD ["safety-rust"]

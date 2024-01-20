@@ -12,8 +12,7 @@ const DESCRIPTION: &str = "Welcome to Safety-chan v4.
 This bot has a few purposes:
 1. Make and handle polls.
 2. Message out about birthdays
-3. Collect stats about emoji-usage (this is opt-in)
-4. Memes: getting cats, owoifying, and rolling dice.
+3. Memes: getting cats, owoifying, and rolling dice.
 These are summarized in the below fields:";
 
 pub fn help_command(commands: &mut CreateApplicationCommands) -> &mut CreateApplicationCommands {

@@ -4,6 +4,8 @@ mod util;
 use std::{
   collections::HashMap,
   env::var,
+  fs::OpenOptions,
+  io::{Seek, Write},
   ops::{Add, Sub},
   sync::{
     atomic::{AtomicBool, Ordering},
@@ -14,10 +16,11 @@ use std::{
 
 use chrono::{Datelike, Duration as ChronoDuration, NaiveDate, Timelike, Utc};
 use chrono_tz::EST5EDT;
-use redis::{AsyncCommands, Client, RedisError};
+use redis::{cmd, AsyncCommands, Client, RedisError};
 use serenity::{
   async_trait,
   client::Client as DiscordClient,
+  gateway::ConnectionStage,
   http::Http,
   model::{
     gateway::{Activity, GatewayIntents},
@@ -35,7 +38,9 @@ use tokio::{
   time::{interval, sleep},
 };
 
-use commands::{birthday::*, copy::*, help::*, link::*, news::*, nya::*, owo::*, poll::*, roll::*};
+use commands::{
+  birthday::*, copy::*, help::*, link::*, news::*, nya::*, owo::*, poll::*, roll::*, unshittify::*,
+};
 
 use util::{
   rng::random_number,
@@ -66,6 +71,7 @@ impl EventHandler for Handler {
           "poll" => interaction_poll(&ctx, &app_command).await,
           "roll" => interaction_roll(&ctx, &app_command).await,
           "sanitize" => interaction_sanitize(&ctx, &app_command).await,
+          "unshitify" => interaciton_unshitify(&ctx, &app_command).await,
           _ => Err(format!("No command {}", command_name)),
         } {
           let _ = app_command
@@ -177,6 +183,8 @@ async fn main() {
     .parse::<u64>()
     .expect("Id is not valid");
 
+  let healthckeck_file = var("HEALTHCHECK_FILE").unwrap_or(String::from("/tmp/safety_health"));
+
   let http = Http::new_with_application_id(&token, app_id);
 
   let intents = GatewayIntents::DIRECT_MESSAGES | GatewayIntents::GUILDS;
@@ -221,7 +229,7 @@ async fn main() {
     let lock = redis_scheduler_arc.clone();
 
     spawn(async move {
-      let mut interval = interval(Duration::from_secs(30));
+      let mut interval: tokio::time::Interval = interval(Duration::from_secs(30));
 
       loop {
         let jobs = {
@@ -251,6 +259,57 @@ async fn main() {
 
     let conn_key = Arc::new(Mutex::new(RedisWrapper(persistent_connection)));
     let conn_clone = conn_key.clone();
+    let healthcheck = conn_key.clone();
+
+    let shards = client.shard_manager.clone();
+
+    let mut file = OpenOptions::new()
+      .write(true)
+      .truncate(true)
+      .open(healthckeck_file)
+      .expect("Expected to be able to create and write to healthcehck");
+    file
+      .write_all(b"")
+      .expect("Expected to be able to write to healthcheck");
+
+    spawn(async move {
+      let mut interval: tokio::time::Interval = interval(Duration::from_secs(5));
+
+      loop {
+        let resp: Result<String, RedisError> = {
+          let mut lock = healthcheck.lock().await;
+          cmd("PING").query_async(&mut lock.0).await
+        };
+
+        let shard_manager = shards.lock().await;
+
+        let shards = shard_manager.runners.lock().await;
+        let mut disconnected: u64 = 0;
+
+        for shard in shards.values() {
+          if shard.stage != ConnectionStage::Connected {
+            disconnected += 1;
+          }
+        }
+
+        let ok = resp.is_ok() && disconnected == 0;
+        let now = Utc::now().with_timezone(&EST5EDT);
+
+        file.set_len(0).expect("Could not set length");
+        file.rewind().expect("Could not unwind");
+        file
+          .write_all(
+            format!(
+              "OK: {}\nRedis: {:?}\nDiscord: {} disconnected\nTime: {}",
+              ok, resp, disconnected, now
+            )
+            .as_bytes(),
+          )
+          .expect("Could not update healthcheck");
+
+        interval.tick().await;
+      }
+    });
 
     spawn(async move {
       loop {
@@ -387,7 +446,7 @@ async fn main() {
     Command::set_global_application_commands(&http, |commands| {
       birthday_command(copy_command(paste_command(sanitize_command(roll_command(
         poll_command(owo_command(nya_command(news_command(help_command(
-          commands,
+          unshittify_command(commands),
         ))))),
       )))))
     })
