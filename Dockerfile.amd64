@@ -1,0 +1,27 @@
+FROM amd64/rust:latest as builder
+
+RUN apt update && apt upgrade -y
+RUN apt install -y g++ libssl-dev pkg-config 
+
+WORKDIR /usr/src/app
+
+# dummy for cache
+COPY dummy.rs .
+COPY Cargo.toml .
+RUN sed -i 's#src/main.rs#dummy.rs#' Cargo.toml
+RUN cargo build --release
+
+# the real thing
+RUN sed -i 's#dummy.rs#src/main.rs#' Cargo.toml
+COPY . .
+
+RUN cargo install --path .
+
+FROM debian:stable-slim
+RUN apt update && apt install -y ca-certificates
+COPY --from=builder /usr/local/cargo/bin/safety-rust /usr/local/bin/safety-rust
+
+VOLUME /tmp
+HEALTHCHECK --interval=30s CMD grep -q "OK: true" /tmp/safety_health
+
+CMD ["safety-rust"]

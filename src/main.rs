@@ -264,6 +264,7 @@ async fn main() {
     let shards = client.shard_manager.clone();
 
     let mut file = OpenOptions::new()
+      .create(true)
       .write(true)
       .truncate(true)
       .open(healthckeck_file)
